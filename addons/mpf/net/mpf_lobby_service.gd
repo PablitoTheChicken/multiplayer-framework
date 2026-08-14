@@ -171,7 +171,14 @@ func _on_steam_lobby_joined(lobby_id: int, _permissions: int, _locked: bool, res
 		return
 	var owner := MpfSteam.lobby_owner(lobby_id)
 	if owner == MpfSteam.steam_id():
-		return # We own it; hosting handles this path.
+		# Steam joins the creator to its own lobby, which is expected while
+		# hosting. Reaching here after a deliberate join means the lobby
+		# belongs to this account - report it rather than leaving the caller
+		# waiting for a resolution that will never come.
+		if _joining != null:
+			_joining = null
+			failed.emit("that lobby belongs to this Steam account; a single account cannot join itself")
+		return
 	_steam_lobby = lobby_id
 	resolved.emit(str(lobby_id), str(owner))
 

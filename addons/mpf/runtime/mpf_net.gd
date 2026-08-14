@@ -65,6 +65,7 @@ var _relevant: Dictionary = {}
 var _budgets: Dictionary = {}
 var _reserved: Dictionary = {}
 var _ping_timer: float = 0.0
+var _connect_deadline: int = 0
 var _last_error: String = ""
 
 ## Optional `func(peer_id: int) -> Vector3` giving the point relevancy is
@@ -120,6 +121,12 @@ func _process(delta: float) -> void:
 		transport.poll(delta)
 	if not _delayed.is_empty():
 		_flush_delayed()
+	if _connect_deadline > 0 and Time.get_ticks_msec() > _connect_deadline:
+		_connect_deadline = 0
+		var reason := "timed out while connecting"
+		MpfLog.warn("net", "Connection attempt timed out")
+		leave(reason)
+		connection_failed.emit(reason)
 	if status == Status.ONLINE and role != Role.NONE:
 		_ping_timer += delta
 		if _ping_timer >= PING_INTERVAL:
@@ -322,6 +329,9 @@ func defaults() -> Dictionary:
 		"compression": true,
 		"app_id": int(ProjectSettings.get_setting("mpf/network/steam_app_id", 0)),
 		"auth_timeout": 10.0,
+		# A connection attempt that stalls must end in a reported failure, not
+		# a spinner. Lobby resolution, DNS and NAT traversal can all hang.
+		"connect_timeout": 15.0,
 		"peer_timeout": 12.0,
 		"peer_message_budget": 240.0,
 		"reconnect_grace": 120.0,
@@ -721,6 +731,10 @@ func _set_status(value: Status) -> void:
 	if status == value:
 		return
 	status = value
+	if value == Status.CONNECTING:
+		_connect_deadline = Time.get_ticks_msec() + int(float(config.get("connect_timeout", 15.0)) * 1000.0)
+	else:
+		_connect_deadline = 0
 	status_changed.emit(int(value))
 
 
