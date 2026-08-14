@@ -77,7 +77,9 @@ func create_client(target: Variant, options: Dictionary) -> MultiplayerPeer:
 
 
 func poll(_delta: float) -> void:
-	MpfSteam.run_callbacks()
+	# Net pumps Steam callbacks for as long as Steam is initialised, session or
+	# not, so doing it here as well would only run them twice a frame.
+	pass
 
 
 func shutdown() -> void:

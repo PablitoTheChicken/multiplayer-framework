@@ -85,6 +85,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_3:
 			Net.host_offline()
 		KEY_4:
+			_found_lobbies.clear()
+			MPF.events.emit(&"prompt", {"text": "Searching for lobbies..."})
 			Net.refresh_lobbies()
 		KEY_5:
 			# Hosting over Steam is what initialises Steam, so lobby listing
@@ -95,7 +97,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			# other discovers with 4 and joins with 6 - pressing 5 on both
 			# just creates two separate lobbies.
 			if _found_lobbies.is_empty():
-				MpfLog.warn("demo", "No lobbies found yet - press 4 to search first")
+				MPF.events.emit(&"prompt", {"text": "No lobbies found - press 4 to search"})
 			else:
 				MpfLog.info("demo", "Joining", {"lobby": str(_found_lobbies[0])})
 				Net.join(_found_lobbies[0])
@@ -135,6 +137,7 @@ func _on_peer_left(peer: MpfPeer, _reason: String) -> void:
 
 func _on_lobbies_updated(found: Array[MpfLobby]) -> void:
 	_found_lobbies = found
+	MPF.events.emit(&"prompt", {"text": "Search returned %d lobby(s)" % found.size()})
 	MpfLog.info("demo", "Lobbies found", {"count": found.size()})
 	for lobby: MpfLobby in found:
 		MpfLog.info("demo", "  %s" % lobby, {"target": lobby.connect_target()})

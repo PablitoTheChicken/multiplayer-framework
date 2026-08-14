@@ -110,6 +110,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	# Steam answers everything through callbacks - lobby created, lobby list,
+	# invites - and they only fire while this is pumped. Leaving it to the
+	# transport meant a peer that was browsing rather than playing had Steam
+	# initialised but deaf: requests went out and no reply ever arrived.
+	if MpfSteam.initialized:
+		MpfSteam.run_callbacks()
 	if transport != null:
 		transport.poll(delta)
 	if not _delayed.is_empty():
