@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://addons/mpf/net/mpf_net_identity.gd" id="1_identity"]
 [ext_resource type="Script" path="res://addons/mpf/net/mpf_net_transform.gd" id="2_transform"]
 [ext_resource type="Script" path="res://addons/mpf/net/mpf_net_state.gd" id="3_state"]
+[ext_resource type="Script" path="res://addons/mpf/gameplay/mpf_action.gd" id="4_action"]
 
 [node name="TestEntity" type="Node3D"]
 
@@ -15,3 +16,8 @@ send_every_n_ticks = 1
 
 [node name="NetState" type="Node" parent="."]
 script = ExtResource("3_state")
+
+[node name="GateAction" type="Node" parent="."]
+script = ExtResource("4_action")
+action_name = &"gate"
+cooldown = 5.0

@@ -49,5 +49,18 @@ static func from_dict(data: Dictionary) -> MpfPeer:
 	return peer
 
 
+## Stable identity across reconnects, used to hold a slot open and to file save
+## data. The Steam id when there is one; otherwise the best a bare ENet session
+## can manage, which means two players sharing a name share a save.
+static func storage_key_for(platform_id: String, display_name: String) -> String:
+	if platform_id != "":
+		return platform_id
+	return "name:%s" % display_name.to_lower()
+
+
+func storage_key() -> String:
+	return storage_key_for(platform_id, display_name)
+
+
 func _to_string() -> String:
 	return "MpfPeer(%d, %s)" % [id, display_name]

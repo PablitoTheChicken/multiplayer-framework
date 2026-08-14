@@ -1072,14 +1072,6 @@ func release_reservation(storage_key: String) -> void:
 	_reserved.erase(storage_key)
 
 
-## Stable identity for a peer across reconnects. Steam id when available,
-## otherwise derived from the name, which is the best a bare ENet session can do.
-static func storage_key_for(platform_id: String, display_name: String) -> String:
-	if platform_id != "":
-		return platform_id
-	return "name:%s" % display_name.to_lower()
-
-
 ## Holds a peer's slot and game data after a disconnect. Losing your connection
 ## for thirty seconds in a co-op session should not cost you your place, your
 ## team or your loadout.
@@ -1087,7 +1079,7 @@ func _reserve_slot(gone: MpfPeer) -> void:
 	var grace := float(config.get("reconnect_grace", 0.0))
 	if grace <= 0.0:
 		return
-	var key := storage_key_for(gone.platform_id, gone.display_name)
+	var key := gone.storage_key()
 	_reserved[key] = {
 		"meta": gone.meta.duplicate(true),
 		"peer_id": gone.id,
@@ -1099,7 +1091,7 @@ func _reserve_slot(gone: MpfPeer) -> void:
 ## Returns the held entry and consumes it, or an empty dictionary.
 func _claim_slot(platform_id: String, display_name: String) -> Dictionary:
 	_expire_reservations()
-	var key := storage_key_for(platform_id, display_name)
+	var key := MpfPeer.storage_key_for(platform_id, display_name)
 	if not _reserved.has(key):
 		return {}
 	var entry: Dictionary = _reserved[key]

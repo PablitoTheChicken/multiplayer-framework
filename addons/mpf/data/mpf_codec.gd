@@ -66,7 +66,10 @@ static func _parse(bytes: PackedByteArray) -> Variant:
 static func _payload_bytes(data: Dictionary, format: Format) -> PackedByteArray:
 	if format == Format.BINARY:
 		return var_to_bytes(data)
-	return JSON.stringify(data).to_utf8_buffer()
+	# JSON has one number type, so an int written as 10 comes back as 10.0 and
+	# re-serialises differently. Checksumming the value after a normalising
+	# roundtrip is what makes encode and decode agree on the same bytes.
+	return JSON.stringify(JSON.parse_string(JSON.stringify(data))).to_utf8_buffer()
 
 
 static func _checksum(bytes: PackedByteArray) -> String:

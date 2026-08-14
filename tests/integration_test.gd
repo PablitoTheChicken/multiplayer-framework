@@ -27,7 +27,13 @@ const HOST_FINISH_AT := 18.0
 @onready var world: MpfNetWorld = $NetWorld
 
 var _role := "host"
+var _scenario := "core"
 var _results: Array[Dictionary] = []
+var _channel_hits := 0
+var _gate_hits := 0
+var _gate_rejections: Array[String] = []
+var _sent_probe := false
+var _requested_gate := false
 var _elapsed := 0.0
 var _done := false
 
@@ -46,8 +52,16 @@ var _saw_physics_move := false
 func _ready() -> void:
 	world.register_scene(&"probe", ENTITY_SCENE)
 	world.register_scene(&"physics_probe", PHYSICS_SCENE)
-	_role = str(MpfUtil.cli_args().get("test", "host"))
-	print("[TEST] role=%s starting" % _role)
+	var args := MpfUtil.cli_args()
+	_role = str(args.get("test", "host"))
+	_scenario = str(args.get("scenario", "core"))
+	print("[TEST] role=%s scenario=%s starting" % [_role, _scenario])
+	# Registered on both sides: the schema is what the server enforces, and the
+	# client needs the channel to exist in order to send on it at all.
+	Net.register_channel(&"probe_chan", _on_probe_channel, {
+		"direction": "to_server",
+		"schema": {"n": TYPE_INT},
+	})
 	if _role == "host":
 		Net.set_local_name("TestHost")
 		Net.peer_ready.connect(_on_peer_ready)
@@ -55,6 +69,10 @@ func _ready() -> void:
 	else:
 		Net.set_local_name("TestClient")
 		Net.join("127.0.0.1:%d" % PORT)
+
+
+func _on_probe_channel(_sender: int, _payload: Dictionary) -> void:
+	_channel_hits += 1
 
 
 func _process(delta: float) -> void:
@@ -65,10 +83,103 @@ func _process(delta: float) -> void:
 		_record("finished before timeout", false)
 		_finish()
 		return
+	match _scenario:
+		"late_join":
+			_tick_late_join()
+		"rejection":
+			_tick_rejection()
+		_:
+			if _role == "host":
+				_tick_host()
+			else:
+				_tick_client()
+
+
+# --- scenario: late_join ----------------------------------------------------
+#
+# The host changes state and moves the entity BEFORE anyone connects. A joiner
+# must still arrive at the current values, which is what force_sync on
+# peer_joined exists for. Regression cover for state that only replicated to
+# peers who happened to be present when it changed.
+
+func _tick_late_join() -> void:
 	if _role == "host":
-		_tick_host()
-	else:
-		_tick_client()
+		if _entity == null:
+			_entity = world.spawn(&"probe", {}, 1)
+			_record("host spawned before anyone joined", _entity != null)
+			if _entity == null:
+				_finish()
+				return
+			(_entity as Node3D).global_position = TARGET
+			_state_of(_entity).define(&"phase", 1)
+			_state_of(_entity).set_value(&"phase", 42)
+			return
+		if _elapsed > HOST_FINISH_AT:
+			_record("host saw the late joiner arrive", _client_ready)
+			_finish()
+		return
+	var probe := _find_probe()
+	if probe == null:
+		return
+	var state := _state_of(probe)
+	if state == null:
+		return
+	if not _saw_state and int(state.get_value(&"phase", 0)) == 42:
+		_saw_state = true
+		_record("late joiner received state changed before it connected", true)
+	if not _saw_move and (probe as Node3D).global_position.distance_to(TARGET) < TOLERANCE:
+		_saw_move = true
+		_record("late joiner received the current transform", true)
+	if _saw_state and _saw_move:
+		_finish()
+
+
+# --- scenario: rejection ----------------------------------------------------
+#
+# Everything the server is supposed to refuse. These paths were written but
+# never exercised, which is exactly where security bugs hide.
+
+func _tick_rejection() -> void:
+	if _role == "host":
+		if _entity == null:
+			_entity = world.spawn(&"probe", {}, 1)
+			if _entity == null:
+				_record("host spawned the gate entity", false)
+				_finish()
+				return
+			_gate_of(_entity).performed.connect(func(_peer: int, _p: Dictionary) -> void:
+				_gate_hits += 1)
+			return
+		if _elapsed > HOST_FINISH_AT:
+			# One valid message accepted, one schema violation dropped.
+			_record("server accepted the well-formed message", _channel_hits == 1)
+			_record("server dropped the schema violation", _channel_hits < 2)
+			# One request performed, the immediate repeat refused by cooldown.
+			_record("server performed the first request", _gate_hits == 1)
+			_record("server refused the repeat request", _gate_hits < 2)
+			_finish()
+		return
+
+	var probe := _find_probe()
+	if probe == null:
+		return
+	if not _sent_probe:
+		_sent_probe = true
+		Net.send_to_server(&"probe_chan", {"n": 1})
+		Net.send_to_server(&"probe_chan", {"n": "not an int"})
+		return
+	if not _requested_gate:
+		_requested_gate = true
+		var gate := _gate_of(probe)
+		gate.rejected.connect(func(reason: String) -> void: _gate_rejections.append(reason))
+		gate.request({})
+		gate.request({})
+		return
+	if _elapsed > 12.0:
+		_record("client was told why its request was refused", _gate_rejections.size() >= 1)
+		_record("the refusal names the cooldown",
+			_gate_rejections.size() > 0 and _gate_rejections[0].contains("cooldown"))
+		_finish()
 
 
 func _on_peer_ready(peer: MpfPeer) -> void:
@@ -159,6 +270,22 @@ static func _state_of(node: Node) -> MpfNetState:
 	return MpfUtil.find_child_of_type(node, MpfNetState) as MpfNetState
 
 
+static func _gate_of(node: Node) -> MpfAction:
+	return MpfUtil.find_child_of_type(node, MpfAction) as MpfAction
+
+
+## How many assertions this half must produce. A scenario that silently ran
+## fewer checks than expected has failed, not passed.
+func _expected_checks() -> int:
+	match _scenario:
+		"late_join":
+			return 2
+		"rejection":
+			return 2 if _role == "client" else 4
+		_:
+			return 6 if _role == "client" else 4
+
+
 func _record(label: String, ok: bool) -> void:
 	_results.append({"label": label, "ok": ok})
 	print("[TEST] %s  %s" % ["PASS" if ok else "FAIL", label])
@@ -173,7 +300,7 @@ func _finish() -> void:
 		if not bool(result["ok"]):
 			failures += 1
 	# A check that never ran is a failure, not a pass by omission.
-	var expected := 6 if _role == "client" else 4
+	var expected := _expected_checks()
 	if _results.size() < expected:
 		print("[TEST] FAIL  only %d of %d checks ran" % [_results.size(), expected])
 		failures += 1
