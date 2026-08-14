@@ -25,7 +25,7 @@ func _ready() -> void:
 	Net.lobbies_updated.connect(_on_lobbies_updated)
 	MPF.events.on(&"prompt", _on_prompt)
 	Save.players.register_field(&"sessions", 0, MpfPlayerData.Scope.OWNER)
-	hint.text = "WASD move   mouse look   Space jump   E interact   Esc free cursor\n[1] host LAN   [2] join 127.0.0.1   [3] single player   [4] find lobbies   [0] leave"
+	hint.text = "WASD move   mouse look   Space jump   E interact   Esc free cursor\n[1] host LAN   [2] join 127.0.0.1   [3] single player   [4] find lobbies   [5] host via Steam   [0] leave"
 	prompt.text = ""
 	_start_from_cli()
 
@@ -78,6 +78,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			Net.host_offline()
 		KEY_4:
 			Net.refresh_lobbies()
+		KEY_5:
+			# Hosting over Steam is what initialises Steam, so lobby listing
+			# only finds Steam lobbies once something has done this.
+			Net.host({"transport": "steam", "lobby_name": "Sandbox"})
 		KEY_0:
 			Net.leave("quit to menu")
 
