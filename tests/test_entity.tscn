@@ -1,0 +1,17 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_identity.gd" id="1_identity"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_transform.gd" id="2_transform"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_state.gd" id="3_state"]
+
+[node name="TestEntity" type="Node3D"]
+
+[node name="NetIdentity" type="Node" parent="."]
+script = ExtResource("1_identity")
+
+[node name="NetTransform" type="Node" parent="."]
+script = ExtResource("2_transform")
+send_every_n_ticks = 1
+
+[node name="NetState" type="Node" parent="."]
+script = ExtResource("3_state")

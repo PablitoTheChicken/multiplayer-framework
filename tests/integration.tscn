@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/integration_test.gd" id="1_test"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_world.gd" id="2_world"]
+
+[node name="IntegrationTest" type="Node3D"]
+script = ExtResource("1_test")
+
+[node name="NetWorld" type="Node" parent="."]
+script = ExtResource("2_world")

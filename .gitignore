@@ -1,0 +1,20 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Exported builds
+/build/
+*.exe
+*.pck
+
+# Third-party dev tooling, installed per-machine rather than vendored.
+# Remove this line if you would rather pin it with the project.
+addons/godot_ai/
+godot-ai-LICENSE.txt
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.tmp
+Thumbs.db
+.DS_Store

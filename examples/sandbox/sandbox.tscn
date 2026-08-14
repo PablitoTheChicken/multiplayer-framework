@@ -1,0 +1,190 @@
+[gd_scene format=3 uid="uid://qqslx1ui75tq"]
+
+[ext_resource type="Script" uid="uid://0di1rtw00hcu" path="res://examples/sandbox/sandbox.gd" id="1_sandbox"]
+[ext_resource type="Script" uid="uid://btn38bua7i62s" path="res://addons/mpf/net/mpf_net_world.gd" id="2_world"]
+[ext_resource type="Script" uid="uid://j2j1kf8p157e" path="res://examples/sandbox/door.gd" id="3_door"]
+[ext_resource type="Script" uid="uid://16ghmvbuce58" path="res://addons/mpf/net/mpf_net_identity.gd" id="4_identity"]
+[ext_resource type="Script" uid="uid://6xni6evg7ftk" path="res://addons/mpf/net/mpf_net_state.gd" id="5_state"]
+[ext_resource type="Script" uid="uid://jgmh0bo03w08" path="res://addons/mpf/gameplay/mpf_action.gd" id="6_action"]
+[ext_resource type="Script" uid="uid://dbydidjv5rx8c" path="res://addons/mpf/gameplay/mpf_proximity.gd" id="7_proximity"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
+sky_top_color = Color(0.38, 0.52, 0.76, 1)
+sky_horizon_color = Color(0.68, 0.73, 0.79, 1)
+ground_bottom_color = Color(0.18, 0.19, 0.22, 1)
+ground_horizon_color = Color(0.68, 0.73, 0.79, 1)
+sun_angle_max = 20.0
+
+[sub_resource type="Sky" id="Sky_1"]
+sky_material = SubResource("ProceduralSkyMaterial_1")
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 2
+sky = SubResource("Sky_1")
+ambient_light_source = 3
+ambient_light_color = Color(0.5, 0.57, 0.7, 1)
+ambient_light_sky_contribution = 0.3
+ambient_light_energy = 0.5
+tonemap_mode = 3
+tonemap_white = 6.0
+ssao_enabled = true
+glow_enabled = true
+glow_intensity = 0.4
+fog_enabled = true
+fog_light_color = Color(0.6, 0.66, 0.75, 1)
+fog_density = 0.0008
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+size = Vector3(40, 0.5, 40)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_floor"]
+albedo_color = Color(0.26, 0.28, 0.31, 1)
+roughness = 0.9
+uv1_scale = Vector3(12, 12, 12)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
+size = Vector3(40, 0.5, 40)
+
+[sub_resource type="BoxMesh" id="BoxMesh_wall"]
+size = Vector3(6, 2.4, 0.4)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wall"]
+albedo_color = Color(0.55, 0.56, 0.6, 1)
+roughness = 0.85
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
+size = Vector3(6, 2.4, 0.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_door"]
+size = Vector3(1.6, 2.4, 0.25)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_door"]
+albedo_color = Color(0.78, 0.44, 0.22, 1)
+roughness = 0.55
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_door"]
+size = Vector3(1.6, 2.4, 0.25)
+
+[node name="Sandbox" type="Node3D" unique_id=583570476]
+script = ExtResource("1_sandbox")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=295448663]
+environment = SubResource("Environment_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=457634062]
+transform = Transform3D(0.866, -0.353, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 14, 0)
+light_energy = 1.7
+shadow_enabled = true
+shadow_bias = 0.04
+directional_shadow_max_distance = 80.0
+
+[node name="Fill" type="DirectionalLight3D" parent="." unique_id=1281046800]
+transform = Transform3D(-0.866, 0.25, -0.433, 0, 0.866, 0.5, 0.5, 0.433, -0.75, 0, 10, 0)
+light_color = Color(0.75, 0.82, 1, 1)
+light_energy = 0.25
+
+[node name="Floor" type="StaticBody3D" parent="." unique_id=348110882]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Floor" unique_id=1869940027]
+mesh = SubResource("BoxMesh_floor")
+surface_material_override/0 = SubResource("StandardMaterial3D_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Floor" unique_id=712394851]
+shape = SubResource("BoxShape3D_floor")
+
+[node name="WallLeft" type="StaticBody3D" parent="." unique_id=1440077391]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.2, 1.2, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallLeft" unique_id=1818244239]
+mesh = SubResource("BoxMesh_wall")
+surface_material_override/0 = SubResource("StandardMaterial3D_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="WallLeft" unique_id=404828723]
+shape = SubResource("BoxShape3D_wall")
+
+[node name="WallRight" type="StaticBody3D" parent="." unique_id=149741461]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.8, 1.2, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallRight" unique_id=814870475]
+mesh = SubResource("BoxMesh_wall")
+surface_material_override/0 = SubResource("StandardMaterial3D_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="WallRight" unique_id=260283008]
+shape = SubResource("BoxShape3D_wall")
+
+[node name="NetWorld" type="Node" parent="." unique_id=383707451]
+script = ExtResource("2_world")
+
+[node name="Door" type="StaticBody3D" parent="." unique_id=1763306490]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1.2, 0)
+script = ExtResource("3_door")
+
+[node name="Mesh" type="MeshInstance3D" parent="Door" unique_id=1622979517]
+mesh = SubResource("BoxMesh_door")
+surface_material_override/0 = SubResource("StandardMaterial3D_door")
+
+[node name="Collision" type="CollisionShape3D" parent="Door" unique_id=192832865]
+shape = SubResource("BoxShape3D_door")
+
+[node name="NetIdentity" type="Node" parent="Door" unique_id=334020602]
+script = ExtResource("4_identity")
+
+[node name="NetState" type="Node" parent="Door" unique_id=1094153222]
+script = ExtResource("5_state")
+
+[node name="NetAction" type="Node" parent="Door" unique_id=2012374759]
+script = ExtResource("6_action")
+action_name = &"toggle_door"
+cooldown = 0.5
+max_range = 4.0
+
+[node name="Prompt" type="Node3D" parent="Door" unique_id=77011294]
+script = ExtResource("7_proximity")
+radius = 5.0
+data = {
+"prompt": "Open door"
+}
+
+[node name="PromptLabel" type="Label3D" parent="Door" unique_id=1673168169]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+visible = false
+pixel_size = 0.0035
+billboard = 1
+no_depth_test = true
+fixed_size = true
+modulate = Color(1, 0.95, 0.8, 1)
+outline_modulate = Color(0.05, 0.04, 0.03, 1)
+text = "[E]  Open door"
+font_size = 64
+outline_size = 20
+
+[node name="UI" type="CanvasLayer" parent="." unique_id=733776707]
+
+[node name="Panel" type="VBoxContainer" parent="UI" unique_id=726975046]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 660.0
+offset_bottom = 240.0
+
+[node name="Status" type="Label" parent="UI/Panel" unique_id=2010278025]
+layout_mode = 2
+text = "starting"
+
+[node name="Hint" type="Label" parent="UI/Panel" unique_id=130652302]
+layout_mode = 2
+
+[node name="Prompt" type="Label" parent="UI/Panel" unique_id=863436604]
+layout_mode = 2
+
+[node name="Crosshair" type="Label" parent="UI" unique_id=265841585]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -6.0
+offset_top = -12.0
+offset_right = 6.0
+offset_bottom = 12.0
+text = "+"

@@ -1,0 +1,55 @@
+[gd_scene load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://examples/sandbox/player.gd" id="1_player"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_identity.gd" id="2_identity"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_transform.gd" id="3_transform"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_state.gd" id="4_state"]
+[ext_resource type="Script" path="res://addons/mpf/gameplay/mpf_proximity_sensor.gd" id="5_sensor"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
+height = 1.8
+radius = 0.4
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_player"]
+height = 1.8
+radius = 0.4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_player"]
+albedo_color = Color(0.32, 0.62, 0.9, 1)
+roughness = 0.6
+
+[node name="Player" type="CharacterBody3D"]
+script = ExtResource("1_player")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_player")
+surface_material_override/0 = SubResource("StandardMaterial3D_player")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_player")
+
+[node name="NetIdentity" type="Node" parent="."]
+script = ExtResource("2_identity")
+authority = 1
+relevancy_range = 60.0
+
+[node name="NetTransform" type="Node" parent="."]
+script = ExtResource("3_transform")
+max_server_speed = 20.0
+
+[node name="NetState" type="Node" parent="."]
+script = ExtResource("4_state")
+
+[node name="ProximitySensor" type="Node" parent="."]
+script = ExtResource("5_sensor")
+max_distance = 6.0
+
+[node name="CameraPivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.966, -0.259, 0, 0.259, 0.966, 0, 1.4, 0)
+
+[node name="SpringArm3D" type="SpringArm3D" parent="CameraPivot"]
+spring_length = 4.5
+margin = 0.3
+
+[node name="Camera3D" type="Camera3D" parent="CameraPivot/SpringArm3D"]
+fov = 75.0
