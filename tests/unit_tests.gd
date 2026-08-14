@@ -367,12 +367,17 @@ func _test_value_types() -> void:
 
 func _test_steam() -> void:
 	_group("MpfSteam (mocked)")
-	_ok("reports unavailable with no singleton", not MpfSteam.is_available())
+	# A real GodotSteam may or may not be installed here, so assert the
+	# invariants rather than a particular environment.
+	var real_addon := MpfSteam.is_available()
+	_ok("is_ready is false before init", not MpfSteam.is_ready())
 
 	var mock := MockSteam.install()
+	_ok("the mock becomes the active singleton", MpfSteam.api() == mock)
 	_ok("detects the singleton", MpfSteam.is_available())
 	_ok("initialises", MpfSteam.initialize(480))
 	_ok("the mock saw the init", mock.initialised)
+	_ok("is_ready is true once initialised", MpfSteam.is_ready())
 	_eq("reads the steam id", MpfSteam.steam_id(), MockSteam.SELF_ID)
 	_eq("reads the persona name", MpfSteam.persona_name(), "MockPlayer")
 
@@ -410,13 +415,15 @@ func _test_steam() -> void:
 	_ok("the backend lists profiles", backend.list().has("slot1"))
 	_ok("the backend erases", backend.erase("slot1"))
 
-	# Gated off, so nothing selects an untested transport by accident.
-	_ok("the transport stays disabled without the flag", not MpfSteamTransport.enabled())
+	# The transport must never be selectable unless the flag, the addon and a
+	# peer class are all present - installing the addon alone is not consent.
 	var transport := MpfSteamTransport.new()
-	_ok("a disabled transport reports unavailable", not transport.is_available())
+	var expected := MpfSteamTransport.enabled() and MpfSteam.is_available() and MpfSteam.has_peer_class()
+	_eq("transport availability follows the flag and the addon", transport.is_available(), expected)
 
 	MockSteam.uninstall()
-	_ok("uninstalls cleanly", not MpfSteam.is_available())
+	_ok("uninstall restores whatever was there before", MpfSteam.is_available() == real_addon)
+	_ok("uninstall clears the ready state", not MpfSteam.is_ready())
 
 
 func _test_lobby_service() -> void:

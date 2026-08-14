@@ -15,7 +15,7 @@ func id() -> StringName:
 
 
 func is_available() -> bool:
-	return MpfSteam.is_available()
+	return MpfSteam.is_ready()
 
 
 func read(key: String) -> PackedByteArray:

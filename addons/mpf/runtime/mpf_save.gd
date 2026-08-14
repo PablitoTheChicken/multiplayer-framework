@@ -208,10 +208,15 @@ func migrate(data: Dictionary, from_version: int) -> Dictionary:
 
 
 func _make_backend(choice: String, options: Dictionary) -> MpfSaveBackend:
-	if choice == "steam_cloud" or (choice == "auto" and MpfSteam.is_available()):
+	# "auto" requires Steam to be genuinely up, not merely installed. Save
+	# configuration runs at startup, long before a game calls Steam init, so
+	# reaching for the cloud here would route saves into something that cannot
+	# answer. Call configure({"backend": "steam_cloud"}) once Steam is ready.
+	if choice == "steam_cloud" or (choice == "auto" and MpfSteam.is_ready()):
 		var cloud := MpfSteamCloudBackend.new()
 		if cloud.is_available():
 			return cloud
+		MpfLog.warn("save", "Steam Cloud unavailable, using local files")
 	var local := MpfLocalBackend.new()
 	local.directory = String(options.get("directory", "user://saves"))
 	local.encryption_key = String(options.get("encryption_key", ""))

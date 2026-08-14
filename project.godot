@@ -70,6 +70,10 @@ toggle_mouse={
 ]
 }
 
+[mpf]
+
+network/experimental_steam=true
+
 [physics]
 
 3d/physics_engine="Jolt Physics"

@@ -343,7 +343,7 @@ func build_lobby() -> MpfLobby:
 
 ## Starts a lobby search. Results arrive on [signal lobbies_updated].
 func refresh_lobbies(prefer_steam: bool = true) -> void:
-	lobbies.refresh(prefer_steam and MpfSteam.is_available())
+	lobbies.refresh(prefer_steam and MpfSteam.is_ready())
 
 
 func invite_friends() -> bool:
@@ -718,7 +718,7 @@ func _local_peer(id: int) -> MpfPeer:
 	var made := MpfPeer.new()
 	made.id = id
 	made.display_name = local_name
-	made.platform_id = str(MpfSteam.steam_id()) if MpfSteam.is_available() else ""
+	made.platform_id = str(MpfSteam.steam_id()) if MpfSteam.is_ready() else ""
 	made.is_local = true
 	made.is_server = id == SERVER_ID
 	made.joined_at_ms = Time.get_ticks_msec()
@@ -764,7 +764,7 @@ func _on_peer_disconnected(id: int) -> void:
 func _on_connected_to_server() -> void:
 	send_to_server(&"__hello", {
 		"name": local_name,
-		"pid": str(MpfSteam.steam_id()) if MpfSteam.is_available() else "",
+		"pid": str(MpfSteam.steam_id()) if MpfSteam.is_ready() else "",
 		"ver": String(config.get("game_version", "")),
 		"pw": _hash_password(String(config.get("password", ""))),
 		"tok": local_identity_token(),
@@ -1365,10 +1365,18 @@ func _route_entity_batch(channel_name: StringName, sender: int, payload: Diction
 ## for it. Over Steam the transport establishes it; over raw ENet nothing does,
 ## so a claimed id is discarded unless the game explicitly opts in.
 func _verified_platform_id(sender: int, claimed: String) -> String:
+	# Ask the transport who this peer actually is. Over Steam the connection
+	# itself establishes identity, so a mismatch means the peer lied.
+	if transport != null and transport.has_method(&"peer_steam_id"):
+		var actual := int(transport.call(&"peer_steam_id", sender))
+		if actual != 0:
+			if claimed != "" and claimed != str(actual):
+				MpfLog.warn("net", "Peer claimed an identity that is not its own", {
+					"peer": sender, "claimed": claimed, "actual": actual,
+				})
+			return str(actual)
 	if claimed == "":
 		return ""
-	if transport != null and transport.id() == &"steam":
-		return claimed
 	if bool(config.get("trust_client_identity", false)):
 		return claimed
 	MpfLog.debug("net", "Ignoring unverified platform id", {"peer": sender})

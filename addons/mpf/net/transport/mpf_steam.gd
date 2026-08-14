@@ -21,8 +21,17 @@ static func api() -> Object:
 	return Engine.get_singleton("Steam") if Engine.has_singleton("Steam") else null
 
 
+## The addon is present. This says nothing about whether Steam will answer.
 static func is_available() -> bool:
 	return api() != null
+
+
+## The addon is present AND Steam initialised successfully, which is what any
+## call that actually talks to Steam needs. Installing the addon must never be
+## enough on its own to change behaviour: a player without the Steam client
+## running would silently lose whatever was routed through it.
+static func is_ready() -> bool:
+	return initialized and api() != null
 
 
 static func has_peer_class() -> bool:
@@ -83,10 +92,36 @@ static func initialize(app_id: int = 0) -> bool:
 	if app_id > 0:
 		OS.set_environment("SteamAppId", str(app_id))
 		OS.set_environment("SteamGameId", str(app_id))
-	var result: Variant = invoke(["steamInitEx", "steam_init_ex", "steamInit", "steam_init"], [false, app_id])
+	# Argument order is (app_id, embed_callbacks). Passing them the other way
+	# round initialises app 0 and silently fails.
+	var result: Variant = invoke(["steamInitEx", "steam_init_ex", "steamInit", "steam_init"], [app_id, false])
 	initialized = _init_ok(result)
-	MpfLog.info("net", "Steam init", {"ok": initialized, "app_id": app_id})
+	MpfLog.info("net", "Steam init", {"ok": initialized, "app_id": app_id, "result": result})
 	return initialized
+
+
+## True when the Steam client is actually running and logged in. Distinct from
+## the addon merely being installed.
+static func is_running() -> bool:
+	return bool(invoke(["isSteamRunning", "is_steam_running"], [], false))
+
+
+## Ticket proving this account is who it claims. The server validates it with
+## [method begin_auth_session], which is the only way to trust a Steam id that
+## arrived over the wire.
+static func auth_ticket() -> Dictionary:
+	var result: Variant = invoke(["getAuthSessionTicket", "get_auth_session_ticket"], [0], {})
+	return result if typeof(result) == TYPE_DICTIONARY else {}
+
+
+## Returns Steam's begin-auth result code; 0 means the ticket was accepted for
+## checking. The verdict itself arrives on validate_auth_ticket_response.
+static func begin_auth_session(ticket: PackedByteArray, steam_id: int) -> int:
+	return int(invoke(["beginAuthSession", "begin_auth_session"], [ticket, ticket.size(), steam_id], -1))
+
+
+static func end_auth_session(steam_id: int) -> void:
+	invoke(["endAuthSession", "end_auth_session"], [steam_id])
 
 
 static func _init_ok(result: Variant) -> bool:

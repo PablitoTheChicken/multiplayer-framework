@@ -7,10 +7,16 @@
 *.exe
 *.pck
 
-# Third-party dev tooling, installed per-machine rather than vendored.
-# Remove this line if you would rather pin it with the project.
+# Third-party addons, installed per-machine rather than vendored. GodotSteam
+# ships ~30MB of platform binaries and is an optional dependency of your game,
+# not of MPF. Remove these lines if you would rather pin them with the project.
 addons/godot_ai/
+addons/godotsteam/
 godot-ai-LICENSE.txt
+
+# Steam's development App ID override. Never ship it: in production Steam
+# supplies the App ID itself, and a stray file overrides it with the wrong one.
+steam_appid.txt
 
 # Editor and OS noise
 .vscode/

@@ -38,7 +38,7 @@ func _ready() -> void:
 func advertise(lobby: MpfLobby, steam: bool) -> void:
 	_hosted = lobby
 	use_steam = steam
-	if steam and MpfSteam.is_available():
+	if steam and MpfSteam.is_ready():
 		lobby.source = &"steam"
 		MpfSteam.create_lobby(_visibility_code(lobby.data.get("visibility", "public")), maxi(2, lobby.max_players))
 		return
@@ -81,7 +81,7 @@ func pending_launch_lobby() -> int:
 ## Starts a lobby search. Results arrive on [signal list_updated].
 func refresh(steam: bool) -> void:
 	use_steam = steam
-	if steam and MpfSteam.is_available():
+	if steam and MpfSteam.is_ready():
 		_steam_lobbies.clear()
 		MpfSteam.limit_lobby_results(50)
 		MpfSteam.request_lobby_list()
@@ -101,8 +101,8 @@ func stop_refresh() -> void:
 func resolve(lobby: MpfLobby) -> void:
 	_joining = lobby
 	if lobby.source == &"steam":
-		if not MpfSteam.is_available():
-			failed.emit("Steam is not available")
+		if not MpfSteam.is_ready():
+			failed.emit("Steam is not initialised")
 			return
 		MpfSteam.join_lobby(int(lobby.id))
 		return

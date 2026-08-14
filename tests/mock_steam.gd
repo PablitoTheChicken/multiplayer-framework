@@ -30,9 +30,15 @@ var last_filters: Dictionary = {}
 var _next_lobby := 100
 
 
+## Set aside when a real GodotSteam is installed, so the tests do not leave the
+## process without the singleton they borrowed.
+static var _displaced: Object = null
+
+
 static func install() -> MockSteam:
 	var mock := MockSteam.new()
 	if Engine.has_singleton("Steam"):
+		_displaced = Engine.get_singleton("Steam")
 		Engine.unregister_singleton("Steam")
 	Engine.register_singleton("Steam", mock)
 	MpfSteam.initialized = false
@@ -46,6 +52,9 @@ static func uninstall() -> void:
 		# Unregistering does not free it, and Object has no reference counting.
 		if existing is MockSteam:
 			existing.free()
+	if _displaced != null:
+		Engine.register_singleton("Steam", _displaced)
+		_displaced = null
 	MpfSteam.initialized = false
 
 

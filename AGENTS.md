@@ -324,6 +324,12 @@ values must be JSON-safe too unless the save format is binary.
 # integration tests — two real processes over a socket
 pwsh tests/run_tests.ps1
 
+# is the Steam stack actually installed and configured?
+godot --headless --path . --script res://tools/steam_check.gd
+
+# what does the installed GodotSteam actually expose? (writes nothing)
+godot --headless --path . --script res://tools/steam_introspect.gd
+
 # two windows from the editor: Debug → Customize Run Instances → 2
 #   instance 1 args: --host      instance 2 args: --join
 
@@ -356,12 +362,18 @@ Gotchas that have already cost time:
 
 ## 11. Known limits — read before promising anything
 
-**Partly proven.** The Steam layer — lobby lifecycle, discovery, invites, rich
-presence, cloud storage — is now exercised against a mock singleton in
-`tests/mock_steam.gd`, which proves MPF *calls* Steam correctly. It does not
-prove Steam *answers* as expected, and `SteamMultiplayerPeer` cannot be mocked
-at all, so the transport itself remains unexecuted. It stays gated behind
-`mpf/network/experimental_steam`, off by default.
+**Partly proven.** The Steam layer is written against the real GodotSteam 4.x
+surface (verified with `tools/steam_introspect.gd`) and exercised against a
+mock in `tests/mock_steam.gd`. That proves MPF *calls* Steam correctly. A live
+session — two Steam accounts, a real lobby, real P2P traffic — has still never
+run, so the transport stays gated behind `mpf/network/experimental_steam`.
+
+**Installed is not the same as usable.** `MpfSteam.is_available()` means the
+addon is present; `MpfSteam.is_ready()` means Steam initialised and will
+answer. Anything that actually calls Steam must check `is_ready()`. Getting
+this wrong is silent and nasty: merely installing GodotSteam once switched the
+save backend to Steam Cloud on a machine with no Steam client running, and made
+every session start log a hard error from `getSteamID()`.
 
 **Unproven.** LAN discovery, save migrations and save encryption have never
 run.
