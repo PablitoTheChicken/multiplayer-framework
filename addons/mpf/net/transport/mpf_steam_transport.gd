@@ -132,7 +132,10 @@ func _ensure_ready(options: Dictionary) -> bool:
 		_fail("no SteamMultiplayerPeer class is registered")
 		return false
 	if not MpfSteam.initialized and not MpfSteam.initialize(int(options.get("app_id", 0))):
-		_fail("Steam failed to initialise - is the client running, and is steam_appid.txt beside the binary?")
+		# Report Steam's own diagnosis. Guessing at the cause sent a previous
+		# session hunting a missing steam_appid.txt when the real problem was
+		# an out-of-date Steam client.
+		_fail("Steam failed to initialise: %s" % MpfSteam.last_init_error())
 		return false
 	if not MpfSteam.is_running():
 		MpfLog.warn("net", "Steam reports it is not running; connections will likely fail")

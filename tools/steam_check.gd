@@ -89,6 +89,18 @@ func _initialize() -> void:
 	else:
 		_warn("steam_appid.txt", "not next to %s - Steam cannot initialise unless launched from Steam" % OS.get_executable_path().get_file())
 
+	# A live init is the only check that catches a Steam client older than the
+	# SDK this build ships, which fails with an interface name rather than
+	# anything resembling "your Steam is out of date".
+	if steam != null and app_id > 0:
+		if MpfSteam.initialize(app_id):
+			_pass("steam init", "succeeded as %s" % MpfSteam.persona_name())
+		else:
+			_fail("steam init", MpfSteam.last_init_error())
+			blocking += 1
+	elif steam != null:
+		_warn("steam init", "skipped - no app id to initialise with")
+
 	print("")
 	if blocking == 0:
 		print("READY - every required piece is present")

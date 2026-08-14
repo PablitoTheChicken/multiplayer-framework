@@ -15,6 +15,24 @@ const LOBBY_INVISIBLE := 3
 const PEER_CLASSES: PackedStringArray = ["SteamMultiplayerPeer", "SteamMultiplayerPeerExtension"]
 
 static var initialized: bool = false
+## Whatever Steam said about the last init attempt, kept so callers can report
+## Steam's own diagnosis instead of guessing at one.
+static var last_init_result: Dictionary = {}
+
+
+## Steam's ESteamAPIInitResult, which is far more useful than a bare bool.
+static func describe_init_status(status: int) -> String:
+	match status:
+		0:
+			return "ok"
+		1:
+			return "generic failure"
+		2:
+			return "the Steam client is not running"
+		3:
+			return "version mismatch - the Steam client is older than the Steamworks SDK this build uses; update Steam and restart it"
+		_:
+			return "unknown status %d" % status
 
 
 static func api() -> Object:
@@ -99,9 +117,19 @@ static func initialize(app_id: int = 0) -> bool:
 	# Argument order is (app_id, embed_callbacks). Passing them the other way
 	# round initialises app 0 and silently fails.
 	var result: Variant = invoke(["steamInitEx", "steam_init_ex", "steamInit", "steam_init"], [app_id, false])
+	last_init_result = result if typeof(result) == TYPE_DICTIONARY else {}
 	initialized = _init_ok(result)
 	MpfLog.info("net", "Steam init", {"ok": initialized, "app_id": app_id, "result": result})
 	return initialized
+
+
+## Steam's explanation of the last failure, ready to show a player.
+static func last_init_error() -> String:
+	if last_init_result.is_empty():
+		return "Steam did not report a reason"
+	var status := int(last_init_result.get("status", -1))
+	var verbal := String(last_init_result.get("verbal", ""))
+	return "%s (status %d%s)" % [describe_init_status(status), status, ": " + verbal if verbal != "" else ""]
 
 
 ## True when the Steam client is actually running and logged in. Distinct from
