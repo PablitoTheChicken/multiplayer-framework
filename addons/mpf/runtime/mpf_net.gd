@@ -343,6 +343,10 @@ func build_lobby() -> MpfLobby:
 
 ## Starts a lobby search. Results arrive on [signal lobbies_updated].
 func refresh_lobbies(prefer_steam: bool = true) -> void:
+	# Browsing happens before any session exists, so Steam has to be brought up
+	# here or the search quietly falls back to LAN and reports nothing found.
+	if prefer_steam:
+		MpfSteam.ensure_initialized()
 	lobbies.refresh(prefer_steam and MpfSteam.is_ready())
 
 

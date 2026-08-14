@@ -132,6 +132,22 @@ static func last_init_error() -> String:
 	return "%s (status %d%s)" % [describe_init_status(status), status, ": " + verbal if verbal != "" else ""]
 
 
+## Brings Steam up if it is installed, enabled and not already initialised.
+##
+## Anything that talks to Steam without first hosting or joining needs this:
+## browsing lobbies, reading cloud saves or showing a persona name all happen
+## before a session exists, and previously fell back silently because nothing
+## had initialised Steam yet.
+static func ensure_initialized() -> bool:
+	if initialized:
+		return true
+	if not is_available():
+		return false
+	if not bool(ProjectSettings.get_setting("mpf/network/experimental_steam", false)):
+		return false
+	return initialize(int(ProjectSettings.get_setting("mpf/network/steam_app_id", 0)))
+
+
 ## True when the Steam client is actually running and logged in. Distinct from
 ## the addon merely being installed.
 static func is_running() -> bool:

@@ -58,6 +58,7 @@ func _process(_delta: float) -> void:
 	lines.append("players %d/%d   entities %d   rtt %.0f ms" % [
 		Net.player_count(), Net.max_players(), Net.entity_count(), Net.rtt()
 	])
+	lines.append("steam: %s" % _steam_text())
 	for peer: MpfPeer in Net.peers():
 		var sessions: int = int(Save.players.get_for(peer.id).get_value(&"sessions", 0))
 		lines.append("  #%d %s%s   sessions %d" % [
@@ -151,6 +152,16 @@ func _spawn_player(peer_id: int) -> void:
 	}, peer_id)
 	if node != null:
 		_players[peer_id] = node
+
+
+## Searching that returns nothing is ambiguous unless you can see whether Steam
+## is even up, which is exactly the confusion this line exists to remove.
+func _steam_text() -> String:
+	if not MpfSteam.is_available():
+		return "addon not installed"
+	if not MpfSteam.is_ready():
+		return "not initialised (press 4 or 5)"
+	return "ready as %s (%d)" % [MpfSteam.persona_name(), MpfSteam.steam_id()]
 
 
 func _role_text() -> String:
