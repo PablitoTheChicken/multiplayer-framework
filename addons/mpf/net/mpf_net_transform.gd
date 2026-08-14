@@ -34,6 +34,11 @@ var _validated_position := Vector3.ZERO
 var _validated_at: float = 0.0
 var _has_validated: bool = false
 
+## While true the authority stops sending updates. [MpfNetRigidBody] uses this
+## to silence bodies that have gone to sleep. Late-join sync still works, so a
+## paused entity is not an invisible one.
+var paused: bool = false
+
 var _identity: MpfNetIdentity = null
 var _net: Node = null
 var _target: Node = null
@@ -115,7 +120,7 @@ func _process(_delta: float) -> void:
 
 ## Driven by Net's shared replication loop rather than a per-node signal.
 func _mpf_replicate(index: int) -> void:
-	if _identity == null or _net == null or not _identity.is_authority():
+	if paused or _identity == null or _net == null or not _identity.is_authority():
 		return
 	if send_every_n_ticks > 1 and index % send_every_n_ticks != 0:
 		return

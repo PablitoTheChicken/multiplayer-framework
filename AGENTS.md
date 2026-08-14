@@ -139,6 +139,37 @@ Full state is resent automatically to every joining peer.
 
 ---
 
+### Physics bodies
+
+Godot physics is **not deterministic across machines**. Two peers simulating
+the same body will diverge. So exactly one peer simulates and everyone else
+follows the replicated transform.
+
+Add `MpfNetRigidBody` beside the identity and transform:
+
+```
+Crate (RigidBody3D)        ← unchanged: your mass, material, layers, damping
+├── NetIdentity
+├── NetTransform
+└── NetRigidBody
+```
+
+On the authority it does nothing — the body simulates normally. On every other
+peer it sets `freeze = true` in kinematic mode, so the solver stops fighting
+the incoming transform. It also **stops sending while the body sleeps**, so a
+warehouse of settled crates costs no bandwidth, and resends on wake.
+
+Apply forces through it so they land where the simulation lives:
+
+```gdscript
+rigid.push(direction * 12.0)      # server only; wakes the body
+rigid.spin(Vector3.UP * 4.0)
+rigid.teleport(spawn_point)       # moves and syncs immediately
+```
+
+Never replicate the throw *and* the motion — apply the impulse on the server
+and let the resulting transform replicate by itself.
+
 ## 5. Client requests — `MpfAction`
 
 Attacks, interactions, purchases and ability casts are all one shape: the
@@ -277,10 +308,11 @@ encryption, or the Steam Cloud backend. Treat them as unwritten.
 - **World persistence.** `Save` persists player profiles only. Placed
   buildings, chest contents and dropped items are *not* saved. This is the
   largest gap for survival games.
-- **Physics replication.** `MpfNetTransform` writes transforms directly, which
-  fights a `RigidBody3D` solver. Freeze bodies on non-authoritative peers.
-  Godot physics is not deterministic across machines, so physics objects must
-  be simulated on the server and replicated, never simulated independently.
+- **Relative-space replication.** Transforms replicate in world space only, so
+  a player standing on a moving platform or ship will slide and jitter.
+  Walkable moving vehicles need a `reference_frame` on `MpfNetTransform` that
+  replicates ship-local coordinates. Not implemented. Rigid bodies you *ride*
+  rather than *walk on* are fine today.
 - **Client prediction / reconciliation.** Movement is owner-asserted, not
   input-simulated. A modified client can move implausibly; `max_server_speed`
   bounds it but does not eliminate it. Acceptable for PvE, **not** for

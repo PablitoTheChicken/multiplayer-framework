@@ -16,12 +16,15 @@ extends CharacterBody3D
 @onready var camera: Camera3D = $CameraPivot/SpringArm3D/Camera3D
 
 var _focus: MpfProximity = null
+var _focus_action: StringName = &""
+var _held: Node = null
 
 
 func _ready() -> void:
 	global_position = spawn_position
 	state.define(&"health", 100.0)
 	sensor.focus_changed.connect(_on_focus_changed)
+	MPF.events.on(&"crate_held", _on_crate_held)
 	# Ownership is not fixed for the lifetime of the entity: the server can
 	# hand it to another peer, and a reconnect gives this machine a new peer id.
 	# Caching "is this mine" once in _ready leaves stale copies still eating
@@ -61,8 +64,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_mouse"):
 		_capture_mouse(Input.mouse_mode != Input.MOUSE_MODE_CAPTURED)
 		return
-	if event.is_action_pressed("interact") and _focus != null:
-		sensor.trigger_focus(&"toggle_door")
+	if event.is_action_pressed("interact"):
+		if _held != null:
+			_throw_held()
+		elif _focus != null:
+			sensor.trigger_focus(_focus_action, {"dir": aim_direction()})
 		return
 	var motion := event as InputEventMouseMotion
 	if motion == null or Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -77,12 +83,42 @@ func _unhandled_input(event: InputEvent) -> void:
 	)
 
 
+func aim_direction() -> Vector3:
+	return -camera.global_transform.basis.z
+
+
 ## The framework reports what is in focus; the prompt UI stays the game's job.
+## Which action a prompt fires comes from its own data, so the player does not
+## need to know what kinds of things exist in the world.
 func _on_focus_changed(current: MpfProximity, _previous: MpfProximity) -> void:
 	_focus = current
+	_focus_action = StringName(current.get_data(&"action", "interact")) if current != null else &""
+	_refresh_prompt()
+
+
+func _throw_held() -> void:
+	for candidate: Node in MpfUtil.find_children_of_type(_held, MpfAction):
+		var action := candidate as MpfAction
+		if action.action_name == &"grab":
+			action.request({"dir": aim_direction()})
+			return
+
+
+func _on_crate_held(payload: Dictionary) -> void:
+	var crate: Node = payload.get("crate")
+	if int(payload.get("peer", 0)) == identity.owner_peer_id:
+		_held = crate
+	elif _held == crate:
+		_held = null
+	_refresh_prompt()
+
+
+func _refresh_prompt() -> void:
 	var text := ""
-	if current != null:
-		text = "[E] %s" % String(current.get_data(&"prompt", "Interact"))
+	if _held != null:
+		text = "[E] Throw"
+	elif _focus != null:
+		text = "[E] %s" % String(_focus.get_data(&"prompt", "Interact"))
 	MPF.events.emit(&"prompt", {"text": text})
 
 

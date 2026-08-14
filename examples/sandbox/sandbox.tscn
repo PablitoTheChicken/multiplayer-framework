@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://6xni6evg7ftk" path="res://addons/mpf/net/mpf_net_state.gd" id="5_state"]
 [ext_resource type="Script" uid="uid://jgmh0bo03w08" path="res://addons/mpf/gameplay/mpf_action.gd" id="6_action"]
 [ext_resource type="Script" uid="uid://dbydidjv5rx8c" path="res://addons/mpf/gameplay/mpf_proximity.gd" id="7_proximity"]
+[ext_resource type="PackedScene" path="res://examples/sandbox/crate.tscn" id="8_crate"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.38, 0.52, 0.76, 1)
@@ -143,6 +144,7 @@ max_range = 4.0
 script = ExtResource("7_proximity")
 radius = 5.0
 data = {
+"action": "toggle_door",
 "prompt": "Open door"
 }
 
@@ -158,6 +160,18 @@ outline_modulate = Color(0.05, 0.04, 0.03, 1)
 text = "[E]  Open door"
 font_size = 64
 outline_size = 20
+
+[node name="Crate1" parent="." instance=ExtResource("8_crate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.5, 3)
+
+[node name="Crate2" parent="." instance=ExtResource("8_crate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, 1.5, 4)
+
+[node name="Crate3" parent="." instance=ExtResource("8_crate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5, 1.5, 4.5)
+
+[node name="Crate4" parent="." instance=ExtResource("8_crate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.5, 5)
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=733776707]
 

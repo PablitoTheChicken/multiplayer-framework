@@ -1,0 +1,29 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_identity.gd" id="1_identity"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_transform.gd" id="2_transform"]
+[ext_resource type="Script" path="res://addons/mpf/net/mpf_net_rigid_body.gd" id="3_rigid"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_probe"]
+size = Vector3(1, 1, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_probe"]
+
+[node name="PhysicsProbe" type="RigidBody3D"]
+gravity_scale = 0.0
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_probe")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_probe")
+
+[node name="NetIdentity" type="Node" parent="."]
+script = ExtResource("1_identity")
+
+[node name="NetTransform" type="Node" parent="."]
+script = ExtResource("2_transform")
+send_every_n_ticks = 1
+
+[node name="NetRigidBody" type="Node" parent="."]
+script = ExtResource("3_rigid")
