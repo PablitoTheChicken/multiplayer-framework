@@ -11,6 +11,7 @@ const PLAYER_SCENE := preload("res://examples/sandbox/player.tscn")
 @onready var prompt: Label = $UI/Panel/Prompt
 
 var _players: Dictionary = {}
+var _found_lobbies: Array[MpfLobby] = []
 
 
 func _ready() -> void:
@@ -25,7 +26,7 @@ func _ready() -> void:
 	Net.lobbies_updated.connect(_on_lobbies_updated)
 	MPF.events.on(&"prompt", _on_prompt)
 	Save.players.register_field(&"sessions", 0, MpfPlayerData.Scope.OWNER)
-	hint.text = "WASD move   mouse look   Space jump   E interact   Esc free cursor\n[1] host LAN   [2] join 127.0.0.1   [3] single player   [4] find lobbies   [5] host via Steam   [0] leave"
+	hint.text = "WASD move   mouse look   Space jump   E interact   Esc free cursor\n[1] host LAN   [2] join 127.0.0.1   [3] single player   [0] leave\n[5] host via Steam   then on the OTHER peer: [4] find lobbies   [6] join first found"
 	prompt.text = ""
 	_start_from_cli()
 
@@ -62,6 +63,12 @@ func _process(_delta: float) -> void:
 		lines.append("  #%d %s%s   sessions %d" % [
 			peer.id, peer.display_name, "  (you)" if peer.is_local else "", sessions
 		])
+	if not _found_lobbies.is_empty():
+		lines.append("lobbies found (press 6 to join the first):")
+		for lobby: MpfLobby in _found_lobbies:
+			lines.append("  [%s] %s  %d/%d  -> %s" % [
+				lobby.source, lobby.name, lobby.player_count, lobby.max_players, lobby.connect_target(),
+			])
 	status.text = "\n".join(lines)
 
 
@@ -82,6 +89,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			# Hosting over Steam is what initialises Steam, so lobby listing
 			# only finds Steam lobbies once something has done this.
 			Net.host({"transport": "steam", "lobby_name": "Sandbox"})
+		KEY_6:
+			# Press 4 first to populate the list. One peer hosts with 5, the
+			# other discovers with 4 and joins with 6 - pressing 5 on both
+			# just creates two separate lobbies.
+			if _found_lobbies.is_empty():
+				MpfLog.warn("demo", "No lobbies found yet - press 4 to search first")
+			else:
+				MpfLog.info("demo", "Joining", {"lobby": str(_found_lobbies[0])})
+				Net.join(_found_lobbies[0])
 		KEY_0:
 			Net.leave("quit to menu")
 
@@ -117,6 +133,7 @@ func _on_peer_left(peer: MpfPeer, _reason: String) -> void:
 
 
 func _on_lobbies_updated(found: Array[MpfLobby]) -> void:
+	_found_lobbies = found
 	MpfLog.info("demo", "Lobbies found", {"count": found.size()})
 	for lobby: MpfLobby in found:
 		MpfLog.info("demo", "  %s" % lobby, {"target": lobby.connect_target()})
