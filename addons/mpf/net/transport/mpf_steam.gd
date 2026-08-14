@@ -145,6 +145,37 @@ static func lobby_member_count(lobby_id: int) -> int:
 	return int(invoke(["getNumLobbyMembers", "get_num_lobby_members"], [lobby_id], 0))
 
 
+static func lobby_member_by_index(lobby_id: int, index: int) -> int:
+	return int(invoke(["getLobbyMemberByIndex", "get_lobby_member_by_index"], [lobby_id, index], 0))
+
+
+static func lobby_members(lobby_id: int) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	for i: int in lobby_member_count(lobby_id):
+		var member := lobby_member_by_index(lobby_id, i)
+		if member != 0:
+			out.append(member)
+	return out
+
+
+static func set_lobby_joinable(lobby_id: int, joinable: bool) -> void:
+	invoke(["setLobbyJoinable", "set_lobby_joinable"], [lobby_id, joinable])
+
+
+static func set_lobby_type(lobby_id: int, type: int) -> void:
+	invoke(["setLobbyType", "set_lobby_type"], [lobby_id, type])
+
+
+## Shown in a friend's Steam list, and what makes "Join game" work from the
+## friends menu rather than only from an invite.
+static func set_rich_presence(key: String, value: String) -> void:
+	invoke(["setRichPresence", "set_rich_presence"], [key, value])
+
+
+static func clear_rich_presence() -> void:
+	invoke(["clearRichPresence", "clear_rich_presence"])
+
+
 static func request_lobby_list() -> void:
 	invoke(["requestLobbyList", "request_lobby_list"])
 
@@ -197,6 +228,24 @@ static func cloud_list() -> PackedStringArray:
 		if typeof(entry) == TYPE_DICTIONARY:
 			out.append(String((entry as Dictionary).get("name", "")))
 	return out
+
+
+## Steam launches the game with `+connect_lobby <id>` when a player accepts an
+## invite from outside the game. Without reading it, accepting an invite while
+## the game is closed silently does nothing.
+static func launch_lobby_id() -> int:
+	var args := MpfUtil.cli_args()
+	for key: String in ["connect_lobby", "connect-lobby"]:
+		if args.has(key):
+			var value := str(args[key])
+			if value.is_valid_int():
+				return int(value)
+	# Steam passes it as a bare `+connect_lobby 123` pair, which is not a flag.
+	var argv := OS.get_cmdline_args()
+	for i: int in argv.size() - 1:
+		if String(argv[i]) == "+connect_lobby" and String(argv[i + 1]).is_valid_int():
+			return int(String(argv[i + 1]))
+	return 0
 
 
 static func _method_info(object: Object, method: String) -> Dictionary:

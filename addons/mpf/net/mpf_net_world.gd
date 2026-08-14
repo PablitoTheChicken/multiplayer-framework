@@ -22,8 +22,9 @@ signal entity_despawned(node: Node)
 var _parent: Node = null
 var _sequence: int = 0
 var _spawned: Array[Node] = []
-## Replayed verbatim to a peer that joins later.
-var _records: Array = []
+## Replayed verbatim to a peer that joins later, keyed by instance id so a
+## record can be dropped when its node dies by any route.
+var _records: Dictionary = {}
 var _net: Node = null
 
 
@@ -80,7 +81,7 @@ func spawn(key: StringName, props: Dictionary = {}, owner_peer_id: int = 1, auth
 	var node := _spawn_from_data(record)
 	if node == null:
 		return null
-	_records.append(record)
+	_records[node.get_instance_id()] = record
 	if _net != null:
 		_net.send_to_all(&"__spawn", {"e": [record]}, [_net.local_id()])
 	return node
@@ -139,6 +140,7 @@ func capture() -> Dictionary:
 		MpfLog.warn("net", "Only the server may capture the world")
 		return {"spawned": spawned, "placed": placed}
 
+	_prune()
 	for node: Node in entities():
 		var identity := MpfNetIdentity.of(node)
 		if identity == null or not identity.persistent:
@@ -203,10 +205,11 @@ func restore(snapshot: Dictionary) -> int:
 func _on_peer_ready(peer: MpfPeer) -> void:
 	if not MpfRuntime.is_server() or _net == null:
 		return
+	_prune()
 	if peer.id == _net.local_id() or _records.is_empty():
 		return
-	MpfLog.info("net", "Sending spawn catch-up", {"peer": peer.id, "count": _records.size()})
-	_net.send_to(&"__spawn", peer.id, {"e": _records})
+	MpfLog.debug("net", "Sending spawn catch-up", {"peer": peer.id, "count": _records.size()})
+	_net.send_to(&"__spawn", peer.id, {"e": _records.values()})
 
 
 func _on_session_ended(_reason: String) -> void:
@@ -236,11 +239,18 @@ func _rx_despawn(_sender: int, payload: Dictionary) -> void:
 
 func _forget(node: Node) -> void:
 	_spawned.erase(node)
+	_records.erase(node.get_instance_id())
 	entity_despawned.emit(node)
-	var entity_name := String(node.name)
-	for i: int in range(_records.size() - 1, -1, -1):
-		if String((_records[i] as Dictionary).get("n", "")) == entity_name:
-			_records.remove_at(i)
+
+
+## Games free entities directly all the time; only despawn() goes through
+## _forget. Without this sweep a freed node leaves its record behind and the
+## next peer to join is sent a spawn for something that no longer exists.
+func _prune() -> void:
+	for id: Variant in _records.keys():
+		if not is_instance_id_valid(int(id)):
+			_records.erase(id)
+	_spawned = _spawned.filter(func(node: Node) -> bool: return is_instance_valid(node))
 
 
 func _spawn_from_data(record: Dictionary) -> Node:

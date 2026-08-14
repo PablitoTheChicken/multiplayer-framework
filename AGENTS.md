@@ -267,8 +267,22 @@ Save.players.register_field(&"level", 1, MpfPlayerData.Scope.PUBLIC)  # or OWNER
 Save.players.get_for(peer_id).add(&"xp", 50)
 ```
 
-Set `Save.players.key_provider` to the Steam id in production. The default
-falls back to a name-derived key, so two players sharing a name share a save.
+### Identity — who a save belongs to
+
+**The server decides, never the peer.** A client that picks its own storage key
+can load anyone else's progression simply by claiming their name, so
+`MpfPeer.storage_key` is assigned during the handshake from the strongest
+available identity:
+
+1. A **verified platform id** — only believed when the transport established it
+   (Steam), or when `trust_client_identity` is explicitly enabled.
+2. A **server-issued token**, stored locally by the client and presented on
+   reconnect. Unguessable rather than merely unlikely.
+3. A **guest key** derived from the name, as a last resort.
+
+Never derive a save key from `display_name` in game code. Override
+`Save.players.key_provider` only if you have a stronger identity than the
+framework does.
 
 ### World persistence
 
@@ -342,12 +356,15 @@ Gotchas that have already cost time:
 
 ## 11. Known limits — read before promising anything
 
-**Unproven.** The Steam transport has never executed against a real Steam
-client and is gated behind `mpf/network/experimental_steam`, off by default —
-`Net.host({"transport": "steam"})` falls back to ENet rather than silently
-using untested code. The lobby service, LAN discovery, save migrations,
-encryption and the Steam Cloud backend have also never run. Treat them as
-unwritten.
+**Partly proven.** The Steam layer — lobby lifecycle, discovery, invites, rich
+presence, cloud storage — is now exercised against a mock singleton in
+`tests/mock_steam.gd`, which proves MPF *calls* Steam correctly. It does not
+prove Steam *answers* as expected, and `SteamMultiplayerPeer` cannot be mocked
+at all, so the transport itself remains unexecuted. It stays gated behind
+`mpf/network/experimental_steam`, off by default.
+
+**Unproven.** LAN discovery, save migrations and save encryption have never
+run.
 
 **Missing.**
 - **Client prediction / reconciliation.** Movement is owner-asserted, not

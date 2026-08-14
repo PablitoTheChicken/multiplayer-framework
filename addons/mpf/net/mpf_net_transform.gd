@@ -102,7 +102,7 @@ func _ready() -> void:
 		# peer_ready, not peer_joined: the entity is only sent once the peer has
 		# finished loading, and a transform that arrives before it is discarded.
 		_net.peer_ready.connect(_on_peer_ready)
-		_net.register_replicator(self)
+		_net.register_replicator(self, _identity.net_id)
 
 
 func _exit_tree() -> void:
@@ -110,7 +110,7 @@ func _exit_tree() -> void:
 		return
 	if _net != null and _identity != null:
 		_net.unregister_receiver(_identity.net_id, &"__tf")
-		_net.unregister_replicator(self)
+		_net.unregister_replicator(self, _identity.net_id)
 		if _net.peer_ready.is_connected(_on_peer_ready):
 			_net.peer_ready.disconnect(_on_peer_ready)
 
@@ -181,6 +181,12 @@ func force_sync(peer_id: int = 0) -> void:
 func _on_peer_ready(peer: MpfPeer) -> void:
 	if peer.id != _net.local_id():
 		force_sync(peer.id)
+
+
+## Called when this entity comes back into a peer's relevancy range. Without it
+## the peer keeps whatever it saw before the entity went out of range.
+func _mpf_resync(peer_id: int) -> void:
+	force_sync(peer_id)
 
 
 func _snapshot() -> Dictionary:

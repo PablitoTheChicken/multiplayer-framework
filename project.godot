@@ -19,9 +19,9 @@ config/icon="res://icon.svg"
 [autoload]
 
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
-MPF="*res://addons/mpf/runtime/mpf_root.gd"
-Net="*res://addons/mpf/runtime/mpf_net.gd"
-Save="*res://addons/mpf/runtime/mpf_save.gd"
+MPF="*uid://b5862f6k7y6h3"
+Net="*uid://bc31ey1nms5by"
+Save="*uid://xxsji2yyscwx"
 
 [display]
 

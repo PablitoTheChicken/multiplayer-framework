@@ -18,6 +18,10 @@ signal replicated()
 ## and when a write changes a value's type. Typos in a StringName are otherwise
 ## silent, which is the most common way to lose an afternoon with this class.
 @export var strict_keys: bool = true
+## Hard ceiling on distinct keys. An owner-authoritative client can push state
+## for its own entity, so without a cap it can grow the server's memory without
+## limit one key at a time.
+@export var max_keys: int = 64
 
 var _values: Dictionary = {}
 var _dirty: Dictionary = {}
@@ -46,7 +50,7 @@ func _ready() -> void:
 		# peer has finished loading, and state that arrives before it lands on
 		# a peer with nowhere to put it.
 		_net.peer_ready.connect(_on_peer_ready)
-		_net.register_replicator(self)
+		_net.register_replicator(self, _identity.net_id)
 
 
 func _exit_tree() -> void:
@@ -54,7 +58,7 @@ func _exit_tree() -> void:
 		return
 	if _net != null and _identity != null:
 		_net.unregister_receiver(_identity.net_id, &"__state")
-		_net.unregister_replicator(self)
+		_net.unregister_replicator(self, _identity.net_id)
 		if _net.peer_ready.is_connected(_on_peer_ready):
 			_net.peer_ready.disconnect(_on_peer_ready)
 
@@ -166,6 +170,11 @@ func _on_peer_ready(peer: MpfPeer) -> void:
 		force_sync(peer.id)
 
 
+## Called when this entity comes back into a peer's relevancy range.
+func _mpf_resync(peer_id: int) -> void:
+	force_sync(peer_id)
+
+
 func _complain(action: String, key: StringName) -> void:
 	# Once per key: this fires from reads that can happen every frame, and a
 	# warning per frame buries the very message it is trying to deliver.
@@ -203,7 +212,16 @@ func _receive(sender: int, data: Variant) -> bool:
 	if typeof(data) != TYPE_DICTIONARY or not _sender_allowed(sender):
 		return false
 	for key: Variant in data as Dictionary:
-		_apply(StringName(key), (data as Dictionary)[key])
+		var name := StringName(key)
+		if not _values.has(name):
+			if _values.size() >= max_keys:
+				MpfLog.warn("net", "State key cap reached, dropping inbound key", {
+					"key": String(name), "cap": max_keys,
+				})
+				continue
+			if strict_keys:
+				_complain("receive", name)
+		_apply(name, (data as Dictionary)[key])
 	replicated.emit()
 	return true
 

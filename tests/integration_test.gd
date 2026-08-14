@@ -35,6 +35,11 @@ var _gate_rejections: Array[String] = []
 var _sent_probe := false
 var _requested_gate := false
 var _peak_roster := 0
+var _joins: Array = []
+var _saw_reservation := false
+## Reconnect needs longer than the rest: the server only learns a peer is gone
+## when the transport times it out, which takes seconds on its own.
+var _timeout := TIMEOUT
 var _elapsed := 0.0
 var _done := false
 
@@ -63,6 +68,8 @@ func _ready() -> void:
 		"direction": "to_server",
 		"schema": {"n": TYPE_INT},
 	})
+	if _scenario == "reconnect":
+		_timeout = 60.0
 	if _scenario == "lossy":
 		# Loopback is a perfect link, which hides every interpolation and
 		# ordering bug. Make it behave like a bad connection instead.
@@ -72,6 +79,10 @@ func _ready() -> void:
 	if _role == "host":
 		Net.set_local_name("TestHost")
 		Net.peer_ready.connect(_on_peer_ready)
+		# The host's own peer is announced too; only remote arrivals count here.
+		Net.peer_joined.connect(func(peer: MpfPeer) -> void:
+			if peer.id != Net.local_id():
+				_joins.append({"resumed": peer.resumed, "key": peer.storage_key}))
 		Net.host({"transport": "enet", "port": PORT, "advertise": false, "max_players": 8})
 	else:
 		Net.set_local_name(str(MpfUtil.cli_args().get("name", "TestClient")))
@@ -86,7 +97,7 @@ func _process(delta: float) -> void:
 	if _done:
 		return
 	_elapsed += delta
-	if _elapsed > TIMEOUT:
+	if _elapsed > _timeout:
 		_record("finished before timeout", false)
 		_finish()
 		return
@@ -99,6 +110,8 @@ func _process(delta: float) -> void:
 			_tick_client() if _role == "client" else _tick_host()
 		"three_peer":
 			_tick_three_peer()
+		"reconnect":
+			_tick_reconnect()
 		"persistence":
 			_tick_persistence()
 		_:
@@ -374,6 +387,38 @@ func _tick_persistence() -> void:
 		_finish()
 
 
+# --- scenario: reconnect ----------------------------------------------------
+#
+# A player drops and comes back. The server should hold their slot, recognise
+# them by the token it issued earlier rather than by their name, and mark the
+# second arrival as a resume rather than a new player.
+
+func _tick_reconnect() -> void:
+	if _role == "host":
+		if Net.reserved_count() > 0:
+			_saw_reservation = true
+		if _joins.size() >= 2:
+			_record("held a slot while the player was away", _saw_reservation)
+			_record("the first arrival was not a resume",
+				not bool((_joins[0] as Dictionary)["resumed"]))
+			_record("the second arrival was recognised as a resume",
+				bool((_joins[1] as Dictionary)["resumed"]))
+			_record("both arrivals resolved to the same identity",
+				String((_joins[0] as Dictionary)["key"]) == String((_joins[1] as Dictionary)["key"]))
+			_finish()
+			return
+		if _elapsed > 50.0:
+			_record("saw two arrivals", false)
+			_finish()
+		return
+	# Clients only need to connect; the runner kills and relaunches the first.
+	# Asserted the moment it is true, because the host finishes as soon as it
+	# has seen the second arrival and takes the session down with it.
+	if Net.is_online():
+		_record("client established a session", true)
+		_finish()
+
+
 func _find_probe() -> Node:
 	for node: Node in world.entities():
 		if _state_of(node) != null:
@@ -408,6 +453,8 @@ func _expected_checks() -> int:
 			return 2
 		"persistence":
 			return 2 if _role == "client" else 6
+		"reconnect":
+			return 1 if _role == "client" else 4
 		_:
 			return 6 if _role == "client" else 4
 

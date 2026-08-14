@@ -11,6 +11,10 @@ var _failed := 0
 
 func _initialize() -> void:
 	MpfLog.level = MpfLog.Level.SILENT
+	_run.call_deferred()
+
+
+func _run() -> void:
 	_test_schema()
 	_test_rate()
 	_test_ring()
@@ -21,6 +25,8 @@ func _initialize() -> void:
 	_test_net_time()
 	_test_channel()
 	_test_value_types()
+	_test_steam()
+	await _test_lobby_service()
 	print("\n[UNIT] %s  passed=%d failed=%d" % [
 		"PASSED" if _failed == 0 else "FAILED", _passed, _failed
 	])
@@ -338,8 +344,125 @@ func _test_value_types() -> void:
 	var steam_lobby := MpfLobby.from_dict({"source": "steam", "owner": "123"})
 	_eq("steam lobbies resolve to the owner id", steam_lobby.connect_target(), "123")
 
-	_eq("storage key prefers the platform id", peer.storage_key(), "76561190000000000")
-	_eq("storage key falls back to the name",
-		MpfPeer.storage_key_for("", "Ann"), "name:ann")
-	_ok("storage key is stable across reconnects",
-		MpfPeer.storage_key_for("", "Ann") == MpfPeer.storage_key_for("", "ann"))
+	_eq("storage key prefers a verified platform id",
+		MpfPeer.storage_key_for("76561190000000000", "tok", "Ann"), "steam:76561190000000000")
+	_eq("storage key uses the token when there is no platform id",
+		MpfPeer.storage_key_for("", "abc123", "Ann"), "tok:abc123")
+	_eq("storage key falls back to a guest key",
+		MpfPeer.storage_key_for("", "", "Ann"), "guest:ann")
+	# The whole point: two players cannot collide just by picking the same name.
+	_ok("different tokens give different keys",
+		MpfPeer.storage_key_for("", "aaa", "Ann") != MpfPeer.storage_key_for("", "bbb", "Ann"))
+	_ok("a token beats a shared name",
+		MpfPeer.storage_key_for("", "aaa", "Ann") != MpfPeer.storage_key_for("", "", "Ann"))
+
+
+# --- Steam ------------------------------------------------------------------
+#
+# GodotSteam is a native extension that cannot be installed in CI, which is why
+# this layer sat at zero coverage. MpfSteam resolves everything by name through
+# Engine.get_singleton, so a mock registered under that name is what gets
+# called. This proves MPF talks to Steam correctly; it cannot prove Steam
+# answers the way we expect.
+
+func _test_steam() -> void:
+	_group("MpfSteam (mocked)")
+	_ok("reports unavailable with no singleton", not MpfSteam.is_available())
+
+	var mock := MockSteam.install()
+	_ok("detects the singleton", MpfSteam.is_available())
+	_ok("initialises", MpfSteam.initialize(480))
+	_ok("the mock saw the init", mock.initialised)
+	_eq("reads the steam id", MpfSteam.steam_id(), MockSteam.SELF_ID)
+	_eq("reads the persona name", MpfSteam.persona_name(), "MockPlayer")
+
+	MpfSteam.run_callbacks()
+	_eq("pumps callbacks", mock.callbacks_run, 1)
+
+	MpfSteam.create_lobby(MpfSteam.LOBBY_PUBLIC, 4)
+	var lobby_id: int = mock.lobbies.keys()[0]
+	MpfSteam.set_lobby_data(lobby_id, "name", "Camp")
+	_eq("writes and reads lobby data", MpfSteam.get_lobby_data(lobby_id, "name"), "Camp")
+	_eq("reads the lobby owner", MpfSteam.lobby_owner(lobby_id), MockSteam.SELF_ID)
+	_eq("reads the member count", MpfSteam.lobby_member_count(lobby_id), 1)
+
+	MpfSteam.filter_lobbies_by("mpf", "1", 0)
+	_ok("passes list filters through", mock.last_filters.has("mpf"))
+	MpfSteam.limit_lobby_results(25)
+	_eq("passes the result limit", mock.last_filters.get("_limit"), 25)
+
+	MpfSteam.open_invite_overlay(lobby_id)
+	_eq("opens the invite overlay", mock.overlay_invites.size(), 1)
+
+	var payload := "hello".to_utf8_buffer()
+	_ok("writes to the cloud", MpfSteam.cloud_write("save.dat", payload))
+	_ok("sees the cloud file", MpfSteam.cloud_exists("save.dat"))
+	_eq("reads the cloud file back", MpfSteam.cloud_read("save.dat"), payload)
+	_ok("lists cloud files", MpfSteam.cloud_list().has("save.dat"))
+	_ok("deletes cloud files", MpfSteam.cloud_delete("save.dat"))
+	_ok("the deleted file is gone", not MpfSteam.cloud_exists("save.dat"))
+	_eq("reading a missing file is empty", MpfSteam.cloud_read("nope.dat"), PackedByteArray())
+
+	var backend := MpfSteamCloudBackend.new()
+	_ok("the cloud backend reports available", backend.is_available())
+	_eq("the backend writes", backend.write("slot1", payload), OK)
+	_eq("the backend reads back", backend.read("slot1"), payload)
+	_ok("the backend lists profiles", backend.list().has("slot1"))
+	_ok("the backend erases", backend.erase("slot1"))
+
+	# Gated off, so nothing selects an untested transport by accident.
+	_ok("the transport stays disabled without the flag", not MpfSteamTransport.enabled())
+	var transport := MpfSteamTransport.new()
+	_ok("a disabled transport reports unavailable", not transport.is_available())
+
+	MockSteam.uninstall()
+	_ok("uninstalls cleanly", not MpfSteam.is_available())
+
+
+func _test_lobby_service() -> void:
+	_group("MpfLobbyService (mocked)")
+	var mock := MockSteam.install()
+	MpfSteam.initialize(480)
+	var service := MpfLobbyService.new()
+	root.add_child(service)
+
+	var lobby := MpfLobby.new()
+	lobby.name = "Camp"
+	lobby.host_name = "MockPlayer"
+	lobby.max_players = 4
+	lobby.game_version = "1.0"
+	lobby.data = {"visibility": "public"}
+	service.advertise(lobby, true)
+	# createLobby answers on a callback, never inline, so let the signal land.
+	await process_frame
+	await process_frame
+
+	_ok("created a steam lobby", not mock.lobbies.is_empty())
+	var created_id: int = mock.lobbies.keys()[0]
+	_eq("published the lobby name", MpfSteam.get_lobby_data(created_id, "name"), "Camp")
+	_eq("tagged the lobby as ours", MpfSteam.get_lobby_data(created_id, "mpf"), "1")
+	_eq("published the version", MpfSteam.get_lobby_data(created_id, "version"), "1.0")
+	_eq("reports the current lobby", service.current_lobby_id(), str(created_id))
+
+	service.update_advertisement(3)
+	_eq("republishes the player count", MpfSteam.get_lobby_data(created_id, "players"), "3")
+
+	# Appended rather than reassigned: a GDScript lambda captures locals by
+	# value, so `found = result` inside it would never reach this scope.
+	var found: Array = []
+	service.list_updated.connect(func(result: Array[MpfLobby]) -> void: found.append_array(result))
+	service.refresh(true)
+	await process_frame
+	await process_frame
+	_ok("discovers lobbies", found.size() >= 1)
+	if found.size() >= 1:
+		var first: MpfLobby = found[0]
+		_eq("discovered lobby carries its name", first.name, "Camp")
+		_eq("discovered lobby resolves to its owner", first.connect_target(), str(MockSteam.SELF_ID))
+
+	_ok("invites through the overlay", service.invite())
+	service.stop_advertising()
+
+	root.remove_child(service)
+	service.queue_free()
+	MockSteam.uninstall()

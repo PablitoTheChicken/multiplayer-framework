@@ -22,7 +22,7 @@ if (-not (Test-Path $Godot)) {
     exit 2
 }
 
-$scenarios = @("core", "late_join", "rejection", "lossy", "persistence", "three_peer")
+$scenarios = @("core", "late_join", "rejection", "lossy", "persistence", "three_peer", "reconnect")
 if ($Only) { $scenarios = @($Only) }
 $failed = $false
 
@@ -73,12 +73,20 @@ foreach ($scenario in $scenarios) {
     $clientProc = Start-Instance "client" $scenario $scenario "Alice"
 
     $watched = @(@{n="client";p=$clientProc}, @{n="host";p=$hostProc})
-    $roles = @("host", "client")
     if ($scenario -eq "three_peer") {
         Start-Sleep -Seconds 2
         $client2 = Start-Instance "client" $scenario "$scenario-2" "Bob"
         $watched += @{n="client2";p=$client2}
-        $roles += "client"   # second client writes to its own tag
+    }
+    if ($scenario -eq "reconnect") {
+        # Drop the client mid-session and bring it back, which is what a lost
+        # connection looks like to the server. The gap has to outlast ENet's own
+        # timeout, or the server has not yet noticed anyone left.
+        Start-Sleep -Seconds 6
+        Stop-Process -Id $clientProc.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 12
+        $client2 = Start-Instance "client" $scenario "$scenario-2" "Alice"
+        $watched += @{n="client2";p=$client2}
     }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -98,7 +106,9 @@ foreach ($scenario in $scenarios) {
     Start-Sleep -Milliseconds 500
 
     $tags = @("$scenario-host", "$scenario-client")
-    if ($scenario -eq "three_peer") { $tags += "$scenario-2-client" }
+    if ($scenario -in @("three_peer", "reconnect")) { $tags += "$scenario-2-client" }
+    # The first client here is killed on purpose, so it never prints a summary.
+    if ($scenario -eq "reconnect") { $tags = @("$scenario-host", "$scenario-2-client") }
     foreach ($tag in $tags) {
         $role = if ($tag -like "*-host") { "host" } else { "client" }
         $lines = Get-Content "$logs\$tag.log" -ErrorAction SilentlyContinue | Select-String "\[TEST\]"

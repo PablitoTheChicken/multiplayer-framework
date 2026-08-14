@@ -24,6 +24,14 @@ func _ready() -> void:
 	add_child(beacon)
 	beacon.list_changed.connect(_on_lan_list_changed)
 	_bind_steam()
+	# Accepting an invite from outside the game launches us with the lobby id
+	# on the command line; surface it the same way an in-game invite arrives.
+	var launched := MpfSteam.launch_lobby_id()
+	if launched != 0:
+		var lobby := MpfLobby.new()
+		lobby.source = &"steam"
+		lobby.id = str(launched)
+		invite_accepted.emit.call_deferred(lobby)
 
 
 ## Publishes [param lobby] so other players can find it.
@@ -54,8 +62,20 @@ func stop_advertising() -> void:
 	beacon.stop()
 	if _steam_lobby != 0:
 		MpfSteam.leave_lobby(_steam_lobby)
+		MpfSteam.clear_rich_presence()
 		_steam_lobby = 0
 	_hosted = null
+
+
+## Steam ids of everyone in the current lobby, owner first.
+func lobby_members() -> PackedInt64Array:
+	return MpfSteam.lobby_members(_steam_lobby) if _steam_lobby != 0 else PackedInt64Array()
+
+
+## The lobby this process was launched to join, when a player accepted an
+## invite while the game was closed. Zero when there was none.
+func pending_launch_lobby() -> int:
+	return MpfSteam.launch_lobby_id()
 
 
 ## Starts a lobby search. Results arrive on [signal list_updated].
@@ -137,6 +157,11 @@ func _on_steam_lobby_created(result: int, lobby_id: int) -> void:
 	MpfSteam.set_lobby_data(lobby_id, "players", str(_hosted.player_count))
 	MpfSteam.set_lobby_data(lobby_id, "pw", "1" if _hosted.has_password else "0")
 	MpfSteam.set_lobby_data(lobby_id, "mpf", "1")
+	MpfSteam.set_lobby_joinable(lobby_id, true)
+	# Rich presence is what makes "Join game" appear in a friend's Steam list;
+	# without it invites are the only way in.
+	MpfSteam.set_rich_presence("connect", "+connect_lobby %d" % lobby_id)
+	MpfSteam.set_rich_presence("steam_player_group", str(lobby_id))
 	advertised.emit(_hosted)
 
 

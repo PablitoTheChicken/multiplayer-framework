@@ -60,6 +60,8 @@ var _receivers: Dictionary = {}
 var _player_nodes: Dictionary = {}
 var _relevancy: Dictionary = {}
 var _replicators: Array = []
+var _by_entity: Dictionary = {}
+var _relevant: Dictionary = {}
 var _budgets: Dictionary = {}
 var _reserved: Dictionary = {}
 var _ping_timer: float = 0.0
@@ -208,6 +210,7 @@ func leave(reason: String = "left") -> void:
 	_budgets.clear()
 	_reserved.clear()
 	_delayed.clear()
+	_relevant.clear()
 	# Entity registries deliberately survive: leaving a session does not unload
 	# the scene, and scene-placed entities register in _ready(), which will not
 	# run again. Clearing here would make every door and lever invisible to the
@@ -316,6 +319,9 @@ func defaults() -> Dictionary:
 		"peer_timeout": 12.0,
 		"peer_message_budget": 240.0,
 		"reconnect_grace": 120.0,
+		# Off by default: a client asserting its own platform id can claim
+		# anyone's save data. Only enable it where every peer is trusted.
+		"trust_client_identity": false,
 		"virtual_port": 0,
 	}
 
@@ -569,13 +575,48 @@ func is_relevant_to(peer_id: int, net_id: int) -> bool:
 ## Components use this instead of connecting to the tick and peer signals
 ## individually: a world with a thousand replicated entities would otherwise
 ## fire a thousand signal emissions per tick, which is pure dispatch overhead.
-func register_replicator(target: Object) -> void:
+## [param net_id] lets the relevancy sweep resynchronise this component when an
+## entity comes back into range for a peer.
+func register_replicator(target: Object, net_id: int = 0) -> void:
 	if not _replicators.has(target):
 		_replicators.append(target)
+	if net_id != 0:
+		var list: Array = _by_entity.get(net_id, [])
+		if not list.has(target):
+			list.append(target)
+		_by_entity[net_id] = list
 
 
-func unregister_replicator(target: Object) -> void:
+func unregister_replicator(target: Object, net_id: int = 0) -> void:
 	_replicators.erase(target)
+	if net_id != 0 and _by_entity.has(net_id):
+		var list: Array = _by_entity[net_id]
+		list.erase(target)
+		if list.is_empty():
+			_by_entity.erase(net_id)
+
+
+## An entity that drifted out of a peer's range stopped sending to it, so when
+## it comes back into range that peer is still holding whatever it last saw.
+## Nothing else would ever correct it: an idle entity has no updates to send.
+func _sweep_relevancy() -> void:
+	if _relevancy.is_empty() or role == Role.NONE:
+		return
+	for id: int in multiplayer.get_peers():
+		var seen: Dictionary = _relevant.get(id, {})
+		for raw_id: Variant in _relevancy:
+			var net_id := int(raw_id)
+			var now_relevant := is_relevant_to(id, net_id)
+			if now_relevant and not bool(seen.get(net_id, false)):
+				_resync_entity(net_id, id)
+			seen[net_id] = now_relevant
+		_relevant[id] = seen
+
+
+func _resync_entity(net_id: int, peer_id: int) -> void:
+	for target: Object in _by_entity.get(net_id, []) as Array:
+		if is_instance_valid(target) and target.has_method(&"_mpf_resync"):
+			target.call(&"_mpf_resync", peer_id)
 
 
 # --- Internals --------------------------------------------------------------
@@ -590,6 +631,7 @@ func _register_internal_channels() -> void:
 			"?pid": {"type": TYPE_STRING, "max_length": 32},
 			"?ver": {"type": TYPE_STRING, "max_length": 32},
 			"?pw": {"type": TYPE_STRING, "max_length": 128},
+			"?tok": {"type": TYPE_STRING, "max_length": 64},
 		},
 	})
 	register_channel(&"__welcome", _rx_welcome, MpfUtil.deep_merge(internal, {"direction": "to_clients", "max_bytes": 65536}))
@@ -707,6 +749,7 @@ func _on_peer_disconnected(id: int) -> void:
 	_pending.erase(id)
 	_limiters.erase(id)
 	_budgets.erase(id)
+	_relevant.erase(id)
 	var gone: MpfPeer = _peers.get(id)
 	if gone == null:
 		return
@@ -724,6 +767,7 @@ func _on_connected_to_server() -> void:
 		"pid": str(MpfSteam.steam_id()) if MpfSteam.is_available() else "",
 		"ver": String(config.get("game_version", "")),
 		"pw": _hash_password(String(config.get("password", ""))),
+		"tok": local_identity_token(),
 	})
 
 
@@ -749,6 +793,10 @@ func _on_lobby_failed(reason: String) -> void:
 
 func _on_tick(_delta: float, index: int) -> void:
 	_drive_replicators(index)
+	# A few times a second is plenty: this only catches range transitions, and
+	# it is O(peers x range-limited entities).
+	if is_server() and index % 10 == 0:
+		_sweep_relevancy()
 	for channel_name: StringName in _batches.keys():
 		var batch: Dictionary = _batches[channel_name]
 		if batch.is_empty():
@@ -1017,14 +1065,24 @@ func _rx_hello(sender: int, payload: Dictionary) -> void:
 	if password != "" and String(payload.get("pw", "")) != _hash_password(password):
 		kick(sender, "wrong password")
 		return
-	var claimed := _claim_slot(String(payload.get("pid", "")), _clean_name(String(payload.get("name", "Player"))))
+	var display_name := _clean_name(String(payload.get("name", "Player")))
+	# Identity is decided here, by the server. A peer that picks its own
+	# storage key can load anyone else's save simply by claiming their name.
+	var platform_id := _verified_platform_id(sender, String(payload.get("pid", "")))
+	var token := String(payload.get("tok", ""))
+	if platform_id == "" and not _valid_token(token):
+		token = MpfUtil.short_id(24)
+	var storage_key := MpfPeer.storage_key_for(platform_id, token, display_name)
+
+	var claimed := _claim_slot(storage_key)
 	if claimed.is_empty() and player_count() + reserved_count() >= max_players():
 		kick(sender, "server is full")
 		return
 	var joined := MpfPeer.new()
 	joined.id = sender
-	joined.display_name = _clean_name(String(payload.get("name", "Player")))
-	joined.platform_id = String(payload.get("pid", ""))
+	joined.display_name = display_name
+	joined.platform_id = platform_id
+	joined.storage_key = storage_key
 	joined.authenticated = true
 	if not claimed.is_empty():
 		joined.meta = claimed.get("meta", {}) as Dictionary
@@ -1041,6 +1099,7 @@ func _rx_hello(sender: int, payload: Dictionary) -> void:
 		"peers": roster,
 		"server_ms": MpfNetTime.local_ms(),
 		"scene": current_scene,
+		"tok": token,
 	})
 	send_to_all(&"__join", joined.to_dict(), [local_id(), sender])
 	lobbies.update_advertisement(player_count())
@@ -1060,6 +1119,7 @@ func _rx_welcome(_sender: int, payload: Dictionary) -> void:
 		made.authenticated = true
 		made.is_local = made.id == my_id
 		_peers[made.id] = made
+	_store_identity_token(String(payload.get("tok", "")))
 	time.bootstrap(float(payload.get("server_ms", 0.0)))
 	_set_status(Status.ONLINE)
 	MpfLog.info("net", "Joined session", {"id": my_id, "players": player_count()})
@@ -1136,7 +1196,7 @@ func _reserve_slot(gone: MpfPeer) -> void:
 	var grace := float(config.get("reconnect_grace", 0.0))
 	if grace <= 0.0:
 		return
-	var key := gone.storage_key()
+	var key := gone.storage_key
 	_reserved[key] = {
 		"meta": gone.meta.duplicate(true),
 		"peer_id": gone.id,
@@ -1146,9 +1206,8 @@ func _reserve_slot(gone: MpfPeer) -> void:
 
 
 ## Returns the held entry and consumes it, or an empty dictionary.
-func _claim_slot(platform_id: String, display_name: String) -> Dictionary:
+func _claim_slot(key: String) -> Dictionary:
 	_expire_reservations()
-	var key := MpfPeer.storage_key_for(platform_id, display_name)
 	if not _reserved.has(key):
 		return {}
 	var entry: Dictionary = _reserved[key]
@@ -1300,6 +1359,51 @@ func _route_entity_batch(channel_name: StringName, sender: int, payload: Diction
 			accepted[raw_id] = payload[raw_id]
 	if is_server() and sender != local_id() and not accepted.is_empty():
 		send_to_all(channel_name, accepted, [local_id(), sender])
+
+
+## A platform id is only believed when something other than the peer vouches
+## for it. Over Steam the transport establishes it; over raw ENet nothing does,
+## so a claimed id is discarded unless the game explicitly opts in.
+func _verified_platform_id(sender: int, claimed: String) -> String:
+	if claimed == "":
+		return ""
+	if transport != null and transport.id() == &"steam":
+		return claimed
+	if bool(config.get("trust_client_identity", false)):
+		return claimed
+	MpfLog.debug("net", "Ignoring unverified platform id", {"peer": sender})
+	return ""
+
+
+## Tokens are server-issued, so anything malformed was not issued by us.
+static func _valid_token(token: String) -> bool:
+	if token.length() < 16 or token.length() > 64:
+		return false
+	for i: int in token.length():
+		if not (token[i].is_valid_identifier() or token[i].is_valid_int()):
+			return false
+	return true
+
+
+## The secret this machine presents to prove it is the same player as last
+## time. Stored locally; a peer with no token is issued one on first join.
+func local_identity_token() -> String:
+	var save := MpfRuntime.save()
+	if save == null:
+		return ""
+	return String(save.open("mpf_identity").get_value("token", ""))
+
+
+func _store_identity_token(token: String) -> void:
+	if token == "" or not _valid_token(token):
+		return
+	var save := MpfRuntime.save()
+	if save == null:
+		return
+	var profile: MpfProfile = save.open("mpf_identity")
+	if String(profile.get_value("token", "")) != token:
+		profile.set_value("token", token)
+		profile.save()
 
 
 static func _clean_name(value: String) -> String:

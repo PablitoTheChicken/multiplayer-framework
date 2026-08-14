@@ -49,17 +49,24 @@ static func from_dict(data: Dictionary) -> MpfPeer:
 	return peer
 
 
-## Stable identity across reconnects, used to hold a slot open and to file save
-## data. The Steam id when there is one; otherwise the best a bare ENet session
-## can manage, which means two players sharing a name share a save.
-static func storage_key_for(platform_id: String, display_name: String) -> String:
+## Where this peer's save data is filed, and what a held reconnect slot is
+## keyed by. Assigned by the server during the handshake - never by the peer.
+var storage_key: String = ""
+
+
+## Resolves a storage key from the strongest identity available.
+##
+## A display name must never be used on its own: it is chosen by the client, so
+## keying saves on it lets anyone load anyone else's progression by picking
+## their name. The token is a secret the server issued to that player earlier,
+## which makes it unguessable rather than merely unlikely.
+static func storage_key_for(platform_id: String, token: String, display_name: String) -> String:
 	if platform_id != "":
-		return platform_id
-	return "name:%s" % display_name.to_lower()
-
-
-func storage_key() -> String:
-	return storage_key_for(platform_id, display_name)
+		return "steam:%s" % platform_id
+	if token != "":
+		return "tok:%s" % token
+	# Last resort for a peer with no verified identity and no token yet.
+	return "guest:%s" % display_name.to_lower().validate_filename()
 
 
 func _to_string() -> String:

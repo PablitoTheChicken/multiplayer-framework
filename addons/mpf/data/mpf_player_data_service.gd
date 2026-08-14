@@ -141,12 +141,15 @@ func _receive(_sender: int, payload: Dictionary) -> void:
 	target.apply_replicated(payload.get("v", {}) as Dictionary)
 
 
+## The server decides this during the handshake. Deriving it here from anything
+## the client sent would reopen the hole where picking someone's name loads
+## their save.
 func _key_for(peer: MpfPeer) -> String:
 	if key_provider.is_valid():
 		return String(key_provider.call(peer))
-	if peer.platform_id != "":
-		return peer.platform_id
-	return "local_%s" % peer.display_name.to_lower().validate_filename()
+	if peer.storage_key != "":
+		return peer.storage_key
+	return MpfPeer.storage_key_for(peer.platform_id, "", peer.display_name)
 
 
 static func _profile_id(storage_key: String) -> String:
