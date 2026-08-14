@@ -722,6 +722,14 @@ func _local_peer(id: int) -> MpfPeer:
 	made.is_local = true
 	made.is_server = id == SERVER_ID
 	made.joined_at_ms = Time.get_ticks_msec()
+	# The host is a player too, and must file its save under the same identity
+	# it would use as a client. Without this, hosting and joining give one
+	# person two different saves.
+	var token := local_identity_token()
+	if token == "":
+		token = MpfUtil.short_id(24)
+		_store_identity_token(token)
+	made.storage_key = MpfPeer.storage_key_for(made.platform_id, token, made.display_name)
 	return made
 
 

@@ -89,6 +89,10 @@ static func initialize(app_id: int = 0) -> bool:
 		return true
 	if not is_available():
 		return false
+	# Fall back to the project setting so a caller that did not thread the id
+	# through still initialises the right app rather than app 0.
+	if app_id <= 0:
+		app_id = int(ProjectSettings.get_setting("mpf/network/steam_app_id", 0))
 	if app_id > 0:
 		OS.set_environment("SteamAppId", str(app_id))
 		OS.set_environment("SteamGameId", str(app_id))

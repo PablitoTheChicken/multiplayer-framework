@@ -73,6 +73,7 @@ toggle_mouse={
 [mpf]
 
 network/experimental_steam=true
+network/steam_app_id=480
 
 [physics]
 
