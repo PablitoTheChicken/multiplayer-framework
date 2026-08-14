@@ -10,6 +10,7 @@ var rtt_ms: float = 0.0
 var synced: bool = false
 
 var _samples: MpfRing
+var _needs_snap: bool = true
 
 
 func _init(sample_count: int = 12) -> void:
@@ -29,11 +30,19 @@ func now_ms() -> float:
 
 
 ## Seeds a rough offset from a single server timestamp, before any ping has
-## completed. This deliberately does not enter the sample ring: it has no
-## measured round trip, and a zero-latency sample would win the lowest-rtt
-## selection below and dominate the estimate until it aged out.
+## completed. It deliberately does not enter the sample ring: it has no measured
+## round trip, and a zero-latency sample would win the lowest-rtt selection
+## below and dominate the estimate until it aged out.
+##
+## It does mark the clock usable, because [member synced] means "is there a
+## shared clock" and after this there is one. The first measured sample still
+## replaces it outright rather than easing toward it.
 func bootstrap(server_ms: float) -> void:
 	offset_ms = server_ms - local_ms()
+	_needs_snap = true
+	if not synced:
+		synced = true
+		became_synced.emit()
 
 
 ## Feeds one completed ping exchange into the estimate.
@@ -60,8 +69,11 @@ func _recompute() -> void:
 	if best.is_empty():
 		return
 	rtt_ms = rtt_total / float(_samples.size())
-	# Ease toward the estimate so a correction never teleports interpolated nodes.
-	offset_ms = lerpf(offset_ms, float(best["offset"]), 1.0 if not synced else 0.25)
+	# Ease toward the estimate so a correction never teleports interpolated
+	# nodes, except for the first measured sample which replaces the bootstrap
+	# guess outright.
+	offset_ms = lerpf(offset_ms, float(best["offset"]), 1.0 if _needs_snap else 0.25)
+	_needs_snap = false
 
 
 func reset() -> void:
@@ -69,3 +81,4 @@ func reset() -> void:
 	offset_ms = 0.0
 	rtt_ms = 0.0
 	synced = false
+	_needs_snap = true

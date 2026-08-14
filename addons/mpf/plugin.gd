@@ -15,6 +15,7 @@ const SETTINGS: Array[Dictionary] = [
 	{"name": "mpf/network/tick_rate", "value": 30, "type": TYPE_INT, "hint": PROPERTY_HINT_RANGE, "hint_string": "5,120,1"},
 	{"name": "mpf/network/cli_dedicated", "value": true, "type": TYPE_BOOL},
 	{"name": "mpf/network/steam_app_id", "value": 480, "type": TYPE_INT},
+	{"name": "mpf/network/experimental_steam", "value": false, "type": TYPE_BOOL},
 	{"name": "mpf/save/backend", "value": "auto", "type": TYPE_STRING, "hint": PROPERTY_HINT_ENUM, "hint_string": "auto,local,steam_cloud"},
 	{"name": "mpf/save/directory", "value": "user://saves", "type": TYPE_STRING},
 	{"name": "mpf/save/format", "value": "json", "type": TYPE_STRING, "hint": PROPERTY_HINT_ENUM, "hint_string": "json,binary"},

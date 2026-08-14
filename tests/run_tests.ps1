@@ -22,7 +22,7 @@ if (-not (Test-Path $Godot)) {
     exit 2
 }
 
-$scenarios = @("core", "late_join", "rejection")
+$scenarios = @("core", "late_join", "rejection", "lossy", "persistence", "three_peer")
 if ($Only) { $scenarios = @($Only) }
 $failed = $false
 
@@ -32,11 +32,13 @@ function Stop-Strays {
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
-function Start-Instance($role, $scenario, $tag) {
-    $p = Start-Process -FilePath $Godot -PassThru -ArgumentList @(
+function Start-Instance($role, $scenario, $tag, $peerName = "") {
+    $extra = @()
+    if ($peerName) { $extra = @("--name=$peerName") }
+    $p = Start-Process -FilePath $Godot -PassThru -ArgumentList (@(
         "--headless", "--path", "`"$project`"",
         "res://tests/integration.tscn", "--", "--test=$role", "--scenario=$scenario"
-    ) -RedirectStandardOutput "$logs\$tag-$role.log" -RedirectStandardError "$logs\$tag-$role.err"
+    ) + $extra) -RedirectStandardOutput "$logs\$tag-$role.log" -RedirectStandardError "$logs\$tag-$role.err"
     # Touching Handle caches it; ExitCode is otherwise unreadable afterwards.
     $null = $p.Handle
     return $p
@@ -65,18 +67,27 @@ foreach ($scenario in $scenarios) {
     Start-Sleep -Seconds 1
 
     $hostProc = Start-Instance "host" $scenario $scenario
-    # The late_join scenario deliberately connects after the world has changed.
-    $delay = if ($scenario -eq "late_join") { 6 } else { 3 }
+    # late_join and persistence deliberately connect after the world changed.
+    $delay = if ($scenario -in @("late_join", "persistence")) { 8 } else { 3 }
     Start-Sleep -Seconds $delay
-    $clientProc = Start-Instance "client" $scenario $scenario
+    $clientProc = Start-Instance "client" $scenario $scenario "Alice"
+
+    $watched = @(@{n="client";p=$clientProc}, @{n="host";p=$hostProc})
+    $roles = @("host", "client")
+    if ($scenario -eq "three_peer") {
+        Start-Sleep -Seconds 2
+        $client2 = Start-Instance "client" $scenario "$scenario-2" "Bob"
+        $watched += @{n="client2";p=$client2}
+        $roles += "client"   # second client writes to its own tag
+    }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        if ($hostProc.HasExited -and $clientProc.HasExited) { break }
+        if (-not ($watched | Where-Object { -not $_.p.HasExited })) { break }
         Start-Sleep -Milliseconds 500
     }
 
-    foreach ($entry in @(@{n="client";p=$clientProc}, @{n="host";p=$hostProc})) {
+    foreach ($entry in $watched) {
         if (-not $entry.p.HasExited) {
             Write-Host "  timed out: $($entry.n)" -ForegroundColor Red
             $failed = $true
@@ -86,10 +97,13 @@ foreach ($scenario in $scenarios) {
     }
     Start-Sleep -Milliseconds 500
 
-    foreach ($role in @("host", "client")) {
-        $lines = Get-Content "$logs\$scenario-$role.log" -ErrorAction SilentlyContinue | Select-String "\[TEST\]"
+    $tags = @("$scenario-host", "$scenario-client")
+    if ($scenario -eq "three_peer") { $tags += "$scenario-2-client" }
+    foreach ($tag in $tags) {
+        $role = if ($tag -like "*-host") { "host" } else { "client" }
+        $lines = Get-Content "$logs\$tag.log" -ErrorAction SilentlyContinue | Select-String "\[TEST\]"
         if (-not $lines) {
-            Write-Host "  [$role] no test output" -ForegroundColor Red
+            Write-Host "  [$tag] no test output" -ForegroundColor Red
             $failed = $true
             continue
         }
@@ -104,10 +118,10 @@ foreach ($scenario in $scenarios) {
         # Warnings on stderr are often the point of a test - the rejection
         # scenario passes precisely because the server logs a refusal. Only
         # genuine errors count against the run.
-        $errs = Get-Content "$logs\$scenario-$role.err" -ErrorAction SilentlyContinue |
+        $errs = Get-Content "$logs\$tag.err" -ErrorAction SilentlyContinue |
             Where-Object { $_ -match "SCRIPT ERROR|^ERROR:" }
         if ($errs) {
-            Write-Host "  [$role] errors:" -ForegroundColor Red
+            Write-Host "  [$tag] errors:" -ForegroundColor Red
             $errs | Select-Object -First 12 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
             $failed = $true
         }

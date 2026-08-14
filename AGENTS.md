@@ -131,11 +131,29 @@ the scene, and anything spawned before then never reaches it.
 ```gdscript
 state.define(&"open", false)              # seed, no network send
 state.set_value(&"open", true)            # authority only, replicates
+state.get_bool(&"open")                   # also get_float/int/string/vector3
 state.changed.connect(func(key, value, old): ...)   # fires on every peer
 ```
 
 `define()` deliberately does not send, so loading a scene costs no bandwidth.
-Full state is resent automatically to every joining peer.
+Full state is resent automatically to every peer that becomes ready.
+
+`strict_keys` (on by default) warns once per key when you read or write
+something never passed to `define()`, and when a write changes a value's type.
+A mistyped `StringName` is otherwise completely silent.
+
+### Moving platforms and ships
+
+Set `MpfNetTransform.reference_frame` to replicate in another entity's local
+space instead of world space. A player standing on a moving ship has a world
+position that changes every frame even standing still, so world-space
+replication makes riders slide and jitter. The frame travels by net id, so it
+resolves whether the ship is spawned or scene-placed. 3D only.
+
+```gdscript
+transform.set_reference_frame_node(ship)   # stepped aboard
+transform.set_reference_frame_node(null)   # stepped off
+```
 
 ---
 
@@ -252,6 +270,20 @@ Save.players.get_for(peer_id).add(&"xp", 50)
 Set `Save.players.key_provider` to the Steam id in production. The default
 falls back to a name-derived key, so two players sharing a name share a save.
 
+### World persistence
+
+Mark an entity's identity `persistent` and it is included in a world snapshot.
+Spawned entities are rebuilt on load; scene-placed ones keep their node and
+have their replicated state restored onto it.
+
+```gdscript
+Save.save_world(world)          # server only
+Save.load_world(world)          # returns entities restored, or -1 if no save
+```
+
+Transforms are stored as float arrays so the result stays JSON-safe. State
+values must be JSON-safe too unless the save format is binary.
+
 ---
 
 ## 9. Conventions for this repo
@@ -286,9 +318,19 @@ pwsh tests/run_tests.ps1
 & $godot --headless --path . --export-debug "Windows Dedicated Server" ..\build\server\server.exe
 ```
 
-`tests/run_tests.ps1` asserts spawning, state replication, transform
-replication and clock sync across two processes. **Run it after touching
-anything in `net/`.**
+`tests/run_tests.ps1` runs 108 single-process assertions plus six
+cross-process scenarios: `core`, `late_join`, `rejection`, `lossy`,
+`persistence` and `three_peer`. **Run it after touching anything in `net/`.**
+Use `-Only <scenario>` to run one.
+
+Loopback is a perfect link and hides ordering and interpolation bugs. To make
+it behave like a real connection:
+
+```gdscript
+Net.simulate_latency_ms = 90.0
+Net.simulate_jitter_ms = 40.0
+Net.simulate_loss = 0.25     # unreliable channels only
+```
 
 Gotchas that have already cost time:
 - Killing `*.console.exe` leaves the real `.exe` running and holding the port.
@@ -300,25 +342,29 @@ Gotchas that have already cost time:
 
 ## 11. Known limits — read before promising anything
 
-**Unproven.** The Steam transport has never executed (GodotSteam is not
-installed); nor have the lobby service, LAN discovery, save migrations,
-encryption, or the Steam Cloud backend. Treat them as unwritten.
+**Unproven.** The Steam transport has never executed against a real Steam
+client and is gated behind `mpf/network/experimental_steam`, off by default —
+`Net.host({"transport": "steam"})` falls back to ENet rather than silently
+using untested code. The lobby service, LAN discovery, save migrations,
+encryption and the Steam Cloud backend have also never run. Treat them as
+unwritten.
 
 **Missing.**
-- **World persistence.** `Save` persists player profiles only. Placed
-  buildings, chest contents and dropped items are *not* saved. This is the
-  largest gap for survival games.
-- **Relative-space replication.** Transforms replicate in world space only, so
-  a player standing on a moving platform or ship will slide and jitter.
-  Walkable moving vehicles need a `reference_frame` on `MpfNetTransform` that
-  replicates ship-local coordinates. Not implemented. Rigid bodies you *ride*
-  rather than *walk on* are fine today.
 - **Client prediction / reconciliation.** Movement is owner-asserted, not
   input-simulated. A modified client can move implausibly; `max_server_speed`
   bounds it but does not eliminate it. Acceptable for PvE, **not** for
   competitive PvP.
 - **Host migration.** The host leaving ends the session.
+- **Relative-space replication is 3D only** and untested with a genuinely
+  moving frame. The mechanism exists; a real ship has not been built on it.
 - No delta compression; payloads are Dictionaries via `var_to_bytes`.
+
+**Two mistakes the API still allows.** `world.spawn(key, props, owner_peer_id)`
+records an owner, but ownership grants nothing unless the entity is
+owner-authoritative — pass `MpfNetIdentity.Authority.OWNER` as the fourth
+argument, or the server will refuse that peer's writes. And replication catch-up
+happens on `peer_ready`, never `peer_joined`; anything sent on `peer_joined`
+arrives before the entity exists and is discarded.
 
 ---
 

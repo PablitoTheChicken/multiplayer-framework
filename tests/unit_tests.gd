@@ -275,7 +275,12 @@ func _test_net_time() -> void:
 	_ok("starts unsynced", not clock.synced)
 	clock.bootstrap(MpfNetTime.local_ms() + 5000.0)
 	_ok("bootstrap shifts the offset", clock.offset_ms > 4000.0)
-	_ok("bootstrap does not claim a sync", not clock.synced)
+	_ok("bootstrap makes the clock usable immediately", clock.synced)
+	# The first measured sample replaces the bootstrap guess outright rather
+	# than easing toward it, or the estimate would stay wrong for seconds.
+	clock.submit(1000.0, 5100.0, 1200.0)
+	_ok("the first real sample overrides the bootstrap guess",
+		absf(clock.offset_ms - 4000.0) < 1.0)
 
 	var fresh := MpfNetTime.new(8)
 	fresh.submit(1000.0, 5100.0, 1200.0)

@@ -24,6 +24,10 @@ enum Authority {
 ## anything numerous and local: crates, doors, animals, dropped loot. Leave it
 ## at 0 for things that must stay correct at any distance, like objectives.
 @export var relevancy_range: float = 0.0
+## Include this entity in [method MpfNetWorld.capture]. Spawned entities are
+## recreated on load; scene-placed ones keep their existing node and have their
+## replicated state restored onto it.
+@export var persistent: bool = false
 
 var _registered: int = 0
 var _registered_node: Node = null

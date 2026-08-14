@@ -70,6 +70,17 @@ var _last_error: String = ""
 ## most games; override it for spectators or vehicle cameras.
 var relevancy_origin: Callable = Callable()
 
+## Debug network conditioning, applied to inbound messages before dispatch.
+## Loopback delivers instantly and never drops anything, which hides every
+## interpolation and ordering bug you have. Turn these on to find them.
+## Only unreliable channels are dropped, because the transport would have
+## redelivered a reliable one.
+var simulate_latency_ms: float = 0.0
+var simulate_jitter_ms: float = 0.0
+var simulate_loss: float = 0.0
+
+var _delayed: Array = []
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -99,6 +110,8 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if transport != null:
 		transport.poll(delta)
+	if not _delayed.is_empty():
+		_flush_delayed()
 	if status == Status.ONLINE and role != Role.NONE:
 		_ping_timer += delta
 		if _ping_timer >= PING_INTERVAL:
@@ -194,6 +207,7 @@ func leave(reason: String = "left") -> void:
 	_limiters.clear()
 	_budgets.clear()
 	_reserved.clear()
+	_delayed.clear()
 	# Entity registries deliberately survive: leaving a session does not unload
 	# the scene, and scene-placed entities register in _ready(), which will not
 	# run again. Clearing here would make every door and lever invisible to the
@@ -483,6 +497,11 @@ func entity_count() -> int:
 	return _entities.size()
 
 
+## Every registered net id, for world capture and debug tooling.
+func entity_ids() -> Array:
+	return _entities.keys()
+
+
 ## Associates a peer with its avatar. Filled in automatically by any
 ## [MpfNetIdentity] set to owner authority, and used for server-side range
 ## checks in [MpfAction].
@@ -616,7 +635,7 @@ func _make_transport(name: String, target: Variant) -> MpfTransport:
 static func _auto_transport(target: Variant) -> String:
 	if typeof(target) == TYPE_STRING and (String(target).contains(".") or String(target).contains(":")):
 		return "enet"
-	if MpfSteam.is_available() and MpfSteam.has_peer_class():
+	if MpfSteamTransport.enabled() and MpfSteam.is_available() and MpfSteam.has_peer_class():
 		return "steam"
 	return "enet"
 
@@ -851,6 +870,11 @@ func _mpf_rx_ordered(channel_name: StringName, payload: Variant) -> void:
 func _send_rpc(target: int, channel: MpfChannel, payload: Variant) -> void:
 	if role == Role.NONE or multiplayer.multiplayer_peer == null:
 		return
+	# Replying to a peer that left between its message arriving and the reply
+	# going out is routine, not exceptional - a queued handler, a deferred call
+	# or a slow frame is enough. Without this the engine raises a hard error.
+	if target != SERVER_ID and not multiplayer.get_peers().has(target):
+		return
 	if channel.reliable:
 		rpc_id(target, &"_mpf_rx_reliable", channel.name, payload)
 	elif channel.ordered:
@@ -892,7 +916,40 @@ func _receive(sender: int, channel_name: StringName, payload: Variant) -> void:
 		if reason != "":
 			MpfLog.warn("net", "Schema rejected payload", {"channel": String(channel_name), "from": sender, "reason": reason})
 			return
+	if _condition(channel, sender, payload):
+		return
 	_invoke(channel, sender, payload)
+
+
+## Returns true when the message was dropped or deferred by the conditioner.
+func _condition(channel: MpfChannel, sender: int, payload: Variant) -> bool:
+	if sender == local_id():
+		return false
+	if simulate_loss > 0.0 and not channel.reliable and randf() < simulate_loss:
+		return true
+	if simulate_latency_ms <= 0.0 and simulate_jitter_ms <= 0.0:
+		return false
+	var delay := simulate_latency_ms + randf_range(-simulate_jitter_ms, simulate_jitter_ms)
+	_delayed.append({
+		"at": Time.get_ticks_msec() + maxf(0.0, delay),
+		"channel": channel,
+		"sender": sender,
+		"payload": payload,
+	})
+	return true
+
+
+func _flush_delayed() -> void:
+	if _delayed.is_empty():
+		return
+	var now := float(Time.get_ticks_msec())
+	var pending := []
+	for entry: Dictionary in _delayed:
+		if float(entry["at"]) <= now:
+			_invoke(entry["channel"], int(entry["sender"]), entry["payload"])
+		else:
+			pending.append(entry)
+	_delayed = pending
 
 
 func _invoke(channel: MpfChannel, sender: int, payload: Variant) -> void:

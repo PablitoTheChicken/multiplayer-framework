@@ -10,7 +10,16 @@ func id() -> StringName:
 	return &"steam"
 
 
+## Off unless explicitly enabled. This transport has never been executed
+## against a real Steam client, so it must not be selected by accident - a
+## silent fallback to ENet is far better than shipping an untested code path.
+static func enabled() -> bool:
+	return bool(ProjectSettings.get_setting("mpf/network/experimental_steam", false))
+
+
 func is_available() -> bool:
+	if not enabled():
+		return false
 	return MpfSteam.is_available() and MpfSteam.has_peer_class()
 
 
@@ -63,6 +72,9 @@ func describe(target: Variant) -> String:
 
 
 func _ensure_ready(options: Dictionary) -> bool:
+	if not enabled():
+		_fail("the Steam transport is experimental and untested; enable mpf/network/experimental_steam to use it")
+		return false
 	if not MpfSteam.is_available():
 		_fail("GodotSteam is not installed")
 		return false

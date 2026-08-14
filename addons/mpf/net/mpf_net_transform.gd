@@ -20,6 +20,13 @@ extends Node
 @export var rotation_epsilon_degrees: float = 0.25
 ## A jump larger than this is treated as a teleport and snapped to, not slid to.
 @export var teleport_distance: float = 20.0
+## Extra snapshots sent after an entity stops moving.
+##
+## Transform updates are unreliable, and an entity that comes to rest stops
+## sending. If the last packets are the ones that drop, every other peer is left
+## holding a stale position forever. Repeating the resting pose a few times
+## makes that vanishingly unlikely without costing anything while idle.
+@export var settle_repeats: int = 3
 ## Server-side sanity limit in metres per second for owner-authoritative
 ## entities. 0 disables the check.
 ##
@@ -29,6 +36,19 @@ extends Node
 ## glitch flinging someone into the void. Set it comfortably above your real
 ## top speed so dashes and knockback survive.
 @export var max_server_speed: float = 0.0
+## Replicate relative to this node instead of world space. 3D only.
+##
+## A player standing on a moving ship has a world position that changes every
+## frame even when they are standing still, so world-space replication makes
+## them slide and jitter. Replicating in the ship's local space means only real
+## movement is sent, and riders stay glued while the ship moves and turns.
+##
+## The frame is identified over the wire by its net id, so it resolves on every
+## peer whether the ship is scene-placed or spawned.
+@export var reference_frame: NodePath
+
+var _frame: Node3D = null
+var _remote_frame_id: int = 0
 
 var _validated_position := Vector3.ZERO
 var _validated_at: float = 0.0
@@ -47,6 +67,7 @@ var _buffer := MpfRing.new(24)
 var _last_sent_position := Vector3.ZERO
 var _last_sent_rotation := Vector3.ZERO
 var _has_sent: bool = false
+var _settle_sends: int = 0
 
 
 func _get_configuration_warnings() -> PackedStringArray:
@@ -78,7 +99,9 @@ func _ready() -> void:
 		return
 	if _net != null:
 		_net.register_receiver(_identity.net_id, &"__tf", _receive)
-		_net.peer_joined.connect(_on_peer_joined)
+		# peer_ready, not peer_joined: the entity is only sent once the peer has
+		# finished loading, and a transform that arrives before it is discarded.
+		_net.peer_ready.connect(_on_peer_ready)
 		_net.register_replicator(self)
 
 
@@ -88,8 +111,8 @@ func _exit_tree() -> void:
 	if _net != null and _identity != null:
 		_net.unregister_receiver(_identity.net_id, &"__tf")
 		_net.unregister_replicator(self)
-		if _net.peer_joined.is_connected(_on_peer_joined):
-			_net.peer_joined.disconnect(_on_peer_joined)
+		if _net.peer_ready.is_connected(_on_peer_ready):
+			_net.peer_ready.disconnect(_on_peer_ready)
 
 
 func _process(_delta: float) -> void:
@@ -127,7 +150,11 @@ func _mpf_replicate(index: int) -> void:
 	var position := _read_position()
 	var rotation := _read_rotation()
 	if _has_sent and not _moved(position, rotation):
-		return
+		if _settle_sends <= 0:
+			return
+		_settle_sends -= 1
+	else:
+		_settle_sends = settle_repeats
 	_has_sent = true
 	_last_sent_position = position
 	_last_sent_rotation = rotation
@@ -138,7 +165,12 @@ func _mpf_replicate(index: int) -> void:
 func force_sync(peer_id: int = 0) -> void:
 	if _identity == null or _net == null or not _identity.is_authority():
 		return
-	if peer_id == 0:
+	# A client cannot address another client - Godot's topology only lets it
+	# talk to the server. For a client-owned entity the update has to go up and
+	# be relayed, or a late joiner never learns where it is.
+	if not MpfRuntime.is_server():
+		_net.send_to_server(&"__tf", {_identity.net_id: _snapshot()})
+	elif peer_id == 0:
 		_net.send_to_all(&"__tf", {_identity.net_id: _snapshot()}, [_net.local_id()])
 	else:
 		_net.queue_update_to(peer_id, &"__tf", _identity.net_id, _snapshot())
@@ -146,7 +178,7 @@ func force_sync(peer_id: int = 0) -> void:
 
 ## Updates are only sent when something moves, so an entity that moved and then
 ## stopped would appear at its spawn point to anyone who joined afterwards.
-func _on_peer_joined(peer: MpfPeer) -> void:
+func _on_peer_ready(peer: MpfPeer) -> void:
 	if peer.id != _net.local_id():
 		force_sync(peer.id)
 
@@ -159,7 +191,40 @@ func _snapshot() -> Dictionary:
 		snapshot["r"] = _read_rotation()
 	if sync_scale:
 		snapshot["s"] = _read_scale()
+	var frame_id := _local_frame_id()
+	if frame_id != 0:
+		snapshot["f"] = frame_id
 	return snapshot
+
+
+## Attaches this entity to a moving frame at runtime, for a player who steps
+## onto a ship. Pass null when they step off.
+func set_reference_frame_node(node: Node3D) -> void:
+	_frame = node
+
+
+## The frame this peer replicates against: the authored or assigned node when
+## authoritative, otherwise whatever the sender named by net id.
+func active_frame() -> Node3D:
+	if _identity != null and _identity.is_authority():
+		if is_instance_valid(_frame):
+			return _frame
+		if not reference_frame.is_empty():
+			_frame = get_node_or_null(reference_frame) as Node3D
+		return _frame
+	if _remote_frame_id == 0 or _net == null:
+		return null
+	return _net.find_entity(_remote_frame_id) as Node3D
+
+
+func _local_frame_id() -> int:
+	if not _is_3d:
+		return 0
+	var frame := active_frame()
+	if frame == null:
+		return 0
+	var frame_identity := MpfNetIdentity.of(frame)
+	return frame_identity.net_id if frame_identity != null else 0
 
 
 func _moved(position: Vector3, rotation: Vector3) -> bool:
@@ -178,6 +243,7 @@ func _receive(sender: int, data: Variant) -> bool:
 		return false
 	if not _passes_speed_check(snapshot):
 		return false
+	_remote_frame_id = int(snapshot.get("f", 0))
 	var previous: Variant = _buffer.newest()
 	if previous != null and snapshot.has("p"):
 		var jump := (snapshot["p"] as Vector3).distance_to((previous as Dictionary).get("p", Vector3.ZERO))
@@ -226,14 +292,20 @@ func _sender_allowed(sender: int) -> bool:
 
 func _read_position() -> Vector3:
 	if _is_3d:
-		return (_target as Node3D).global_position
+		var world := (_target as Node3D).global_position
+		var frame := active_frame()
+		return frame.global_transform.affine_inverse() * world if frame != null else world
 	var flat := (_target as Node2D).global_position
 	return Vector3(flat.x, flat.y, 0.0)
 
 
 func _read_rotation() -> Vector3:
 	if _is_3d:
-		return (_target as Node3D).global_rotation
+		var world := (_target as Node3D).global_basis
+		var frame := active_frame()
+		if frame != null:
+			world = frame.global_transform.basis.orthonormalized().inverse() * world
+		return world.get_euler()
 	return Vector3(0.0, 0.0, (_target as Node2D).global_rotation)
 
 
@@ -264,16 +336,24 @@ func _blend(older: Dictionary, newer: Dictionary, weight: float) -> void:
 		_write_scale((older["s"] as Vector3).lerp(newer["s"] as Vector3, weight))
 
 
+## Snapshots are buffered and interpolated in the frame's space, then converted
+## with the frame's *current* transform. That is what keeps a rider glued to a
+## ship that has moved since the packet was sent.
 func _write_position(value: Vector3) -> void:
 	if _is_3d:
-		(_target as Node3D).global_position = value
+		var frame := active_frame()
+		(_target as Node3D).global_position = frame.global_transform * value if frame != null else value
 	else:
 		(_target as Node2D).global_position = Vector2(value.x, value.y)
 
 
 func _write_rotation(value: Vector3) -> void:
 	if _is_3d:
-		(_target as Node3D).global_rotation = value
+		var frame := active_frame()
+		if frame == null:
+			(_target as Node3D).global_rotation = value
+		else:
+			(_target as Node3D).global_basis = frame.global_transform.basis.orthonormalized() * Basis.from_euler(value)
 	else:
 		(_target as Node2D).global_rotation = value.z
 

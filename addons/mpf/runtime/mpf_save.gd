@@ -162,6 +162,33 @@ func list() -> PackedStringArray:
 	return backend.list() if backend != null else PackedStringArray()
 
 
+## Server only. Writes an [MpfNetWorld]'s persistent entities into a profile.
+##
+## This is what makes a survival world survive a restart: placed buildings,
+## chest contents and dropped items come back where the players left them.
+## Values stored in replicated state must be JSON-safe unless the save format
+## is binary.
+func save_world(world: Node, profile_id: String = "world") -> Error:
+	if world == null:
+		return ERR_INVALID_PARAMETER
+	var profile := open(profile_id)
+	profile.set_value("world", world.capture())
+	profile.set_value("saved_at", int(Time.get_unix_time_from_system()))
+	return profile.save()
+
+
+## Server only. Restores a saved world. Returns how many entities came back,
+## or -1 when there was no save to load.
+func load_world(world: Node, profile_id: String = "world") -> int:
+	if world == null:
+		return -1
+	var profile := open(profile_id)
+	var snapshot: Variant = profile.get_value("world")
+	if typeof(snapshot) != TYPE_DICTIONARY:
+		return -1
+	return world.restore(snapshot)
+
+
 ## Registers a transform that upgrades data to [param to_version].
 ## `func(data: Dictionary) -> Dictionary`.
 func register_migration(to_version: int, transform: Callable) -> void:

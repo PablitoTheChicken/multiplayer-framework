@@ -14,9 +14,14 @@ signal replicated()
 ## Send at most every N ticks. Raise it for values that change constantly but
 ## do not need to be exact, like a stamina bar.
 @export var send_every_n_ticks: int = 1
+## Warn when a key is read or written without being declared by [method define],
+## and when a write changes a value's type. Typos in a StringName are otherwise
+## silent, which is the most common way to lose an afternoon with this class.
+@export var strict_keys: bool = true
 
 var _values: Dictionary = {}
 var _dirty: Dictionary = {}
+var _complained: Dictionary = {}
 var _identity: MpfNetIdentity = null
 var _net: Node = null
 
@@ -37,7 +42,10 @@ func _ready() -> void:
 		return
 	if _net != null:
 		_net.register_receiver(_identity.net_id, &"__state", _receive)
-		_net.peer_joined.connect(_on_peer_joined)
+		# peer_ready, not peer_joined: the entity itself is only sent once the
+		# peer has finished loading, and state that arrives before it lands on
+		# a peer with nowhere to put it.
+		_net.peer_ready.connect(_on_peer_ready)
 		_net.register_replicator(self)
 
 
@@ -47,8 +55,8 @@ func _exit_tree() -> void:
 	if _net != null and _identity != null:
 		_net.unregister_receiver(_identity.net_id, &"__state")
 		_net.unregister_replicator(self)
-		if _net.peer_joined.is_connected(_on_peer_joined):
-			_net.peer_joined.disconnect(_on_peer_joined)
+		if _net.peer_ready.is_connected(_on_peer_ready):
+			_net.peer_ready.disconnect(_on_peer_ready)
 
 
 ## Declares a key and its starting value without marking it dirty.
@@ -63,7 +71,35 @@ func define_many(defaults: Dictionary) -> void:
 
 
 func get_value(key: StringName, default_value: Variant = null) -> Variant:
+	if strict_keys and not _values.has(key):
+		_complain("read", key)
 	return _values.get(key, default_value)
+
+
+func get_float(key: StringName, default_value: float = 0.0) -> float:
+	return float(get_value(key, default_value))
+
+
+func get_int(key: StringName, default_value: int = 0) -> int:
+	return int(get_value(key, default_value))
+
+
+func get_bool(key: StringName, default_value: bool = false) -> bool:
+	return bool(get_value(key, default_value))
+
+
+func get_string(key: StringName, default_value: String = "") -> String:
+	return str(get_value(key, default_value))
+
+
+func get_vector3(key: StringName, default_value: Vector3 = Vector3.ZERO) -> Vector3:
+	var value: Variant = get_value(key, default_value)
+	return value if typeof(value) == TYPE_VECTOR3 else default_value
+
+
+## Keys declared with [method define], for debug overlays and tests.
+func keys() -> Array:
+	return _values.keys()
 
 
 func has(key: StringName) -> bool:
@@ -79,6 +115,15 @@ func set_value(key: StringName, value: Variant) -> void:
 	if not is_authority():
 		MpfLog.warn("net", "Ignored non-authoritative state write", {"key": String(key)})
 		return
+	if strict_keys:
+		if not _values.has(key):
+			_complain("write", key)
+		elif _values[key] != null and value != null and typeof(_values[key]) != typeof(value):
+			MpfLog.warn("net", "State key changed type", {
+				"key": String(key),
+				"was": type_string(typeof(_values[key])),
+				"now": type_string(typeof(value)),
+			})
 	if _apply(key, value):
 		_dirty[key] = value
 
@@ -104,7 +149,11 @@ func is_authority() -> bool:
 func force_sync(peer_id: int = 0) -> void:
 	if not is_authority() or _net == null or _identity == null or _values.is_empty():
 		return
-	if peer_id == 0:
+	# A client cannot address another client, so an owner-authoritative entity
+	# must send up and let the server relay.
+	if not MpfRuntime.is_server():
+		_net.send_to_server(&"__state", {_identity.net_id: _values.duplicate(true)})
+	elif peer_id == 0:
 		_net.send_to_all(&"__state", {_identity.net_id: _values.duplicate(true)}, [_net.local_id()])
 	else:
 		_net.queue_update_to(peer_id, &"__state", _identity.net_id, _values.duplicate(true))
@@ -112,9 +161,23 @@ func force_sync(peer_id: int = 0) -> void:
 
 ## A peer that joins after a value changed would otherwise keep the default it
 ## seeded with [method define] forever, so the authority resends everything.
-func _on_peer_joined(peer: MpfPeer) -> void:
+func _on_peer_ready(peer: MpfPeer) -> void:
 	if peer.id != _net.local_id():
 		force_sync(peer.id)
+
+
+func _complain(action: String, key: StringName) -> void:
+	# Once per key: this fires from reads that can happen every frame, and a
+	# warning per frame buries the very message it is trying to deliver.
+	if _complained.has(key):
+		return
+	_complained[key] = true
+	MpfLog.warn("net", "Undeclared state key", {
+		"action": action,
+		"key": String(key),
+		"declared": _values.keys(),
+		"entity": String(get_path()) if is_inside_tree() else "",
+	})
 
 
 func _apply(key: StringName, value: Variant) -> bool:

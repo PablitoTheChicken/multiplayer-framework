@@ -34,6 +34,7 @@ var _gate_hits := 0
 var _gate_rejections: Array[String] = []
 var _sent_probe := false
 var _requested_gate := false
+var _peak_roster := 0
 var _elapsed := 0.0
 var _done := false
 
@@ -62,12 +63,18 @@ func _ready() -> void:
 		"direction": "to_server",
 		"schema": {"n": TYPE_INT},
 	})
+	if _scenario == "lossy":
+		# Loopback is a perfect link, which hides every interpolation and
+		# ordering bug. Make it behave like a bad connection instead.
+		Net.simulate_latency_ms = 90.0
+		Net.simulate_jitter_ms = 40.0
+		Net.simulate_loss = 0.25
 	if _role == "host":
 		Net.set_local_name("TestHost")
 		Net.peer_ready.connect(_on_peer_ready)
-		Net.host({"transport": "enet", "port": PORT, "advertise": false})
+		Net.host({"transport": "enet", "port": PORT, "advertise": false, "max_players": 8})
 	else:
-		Net.set_local_name("TestClient")
+		Net.set_local_name(str(MpfUtil.cli_args().get("name", "TestClient")))
 		Net.join("127.0.0.1:%d" % PORT)
 
 
@@ -88,6 +95,12 @@ func _process(delta: float) -> void:
 			_tick_late_join()
 		"rejection":
 			_tick_rejection()
+		"lossy":
+			_tick_client() if _role == "client" else _tick_host()
+		"three_peer":
+			_tick_three_peer()
+		"persistence":
+			_tick_persistence()
 		_:
 			if _role == "host":
 				_tick_host()
@@ -252,6 +265,115 @@ func _tick_client() -> void:
 		_finish()
 
 
+# --- scenario: three_peer ---------------------------------------------------
+#
+# Two clients at once. Everything above this only ever proved a one-to-one
+# link; roster fan-out and the server relay need a third machine to mean
+# anything. The client that owns the entity drives it, the other watches, so
+# both run the same code and assert opposite halves of the relay.
+
+func _tick_three_peer() -> void:
+	# Latched, because peers finish at different times: asserting the roster at
+	# the end would race whoever quit first.
+	_peak_roster = maxi(_peak_roster, Net.player_count())
+	if _role == "host":
+		if _entity == null and Net.player_count() >= 3:
+			# Spawn once both clients are present, so this scenario isolates
+			# the server relay. Spawn-sync to a late joiner is covered by
+			# late_join and is deliberately not retested here.
+			var owner_id := 0
+			for peer: MpfPeer in Net.peers():
+				if peer.id != Net.local_id():
+					owner_id = peer.id
+					break
+			# Owner authority is what makes owner_peer_id mean anything: without
+			# it the server refuses the owner's writes and nothing is relayed.
+			_entity = world.spawn(&"probe", {}, owner_id, MpfNetIdentity.Authority.OWNER)
+			_record("host spawned an entity owned by a client", _entity != null)
+			if _entity == null:
+				_finish()
+			return
+		# The host must outlive every client: when it quits the session ends,
+		# and a client still working through its own deadline is left with
+		# nothing to observe.
+		if _elapsed > 26.0:
+			_record("host held a roster of three", _peak_roster >= 3)
+			_finish()
+		return
+
+	var probe := _find_probe()
+	if probe == null:
+		return
+	var identity := MpfNetIdentity.of(probe)
+	if identity == null:
+		return
+	if identity.is_owner():
+		# The owning client drives it; the server must relay that onward.
+		(probe as Node3D).global_position = TARGET
+		if _elapsed > 8.0 and _peak_roster >= 3:
+			_record("owning client saw the full roster", true)
+			_record("owning client drove its own entity", true)
+			_finish()
+		return
+	if not _saw_move and (probe as Node3D).global_position.distance_to(TARGET) < TOLERANCE:
+		_saw_move = true
+		_record("observer received another client's motion via the server relay", true)
+		_record("observer saw the full roster", _peak_roster >= 3)
+		_finish()
+
+
+# --- scenario: persistence --------------------------------------------------
+#
+# Capture a world, destroy it, restore it, and check a late joiner receives the
+# restored version rather than the original.
+
+func _tick_persistence() -> void:
+	if _role == "host":
+		if _entity == null:
+			_entity = world.spawn(&"probe", {}, 1)
+			if _entity == null:
+				_record("host spawned a persistent entity", false)
+				_finish()
+				return
+			MpfNetIdentity.of(_entity).persistent = true
+			(_entity as Node3D).global_position = TARGET
+			var state := _state_of(_entity)
+			state.define(&"phase", 1)
+			state.set_value(&"phase", 42)
+			_record("host spawned a persistent entity", true)
+			return
+		if not _moved and _elapsed > 5.0:
+			_moved = true
+			var snapshot := world.capture()
+			var captured := (snapshot["spawned"] as Array).size()
+			_record("capture found the persistent entity", captured == 1)
+			world.clear_entities()
+			_record("world cleared before restore", world.entities().is_empty())
+			var count := world.restore(snapshot)
+			_record("restore rebuilt the entity", count == 1)
+			var back := _find_probe()
+			_record("restored entity kept its state",
+				back != null and int(_state_of(back).get_value(&"phase", 0)) == 42)
+			_record("restored entity kept its position",
+				back != null and (back as Node3D).global_position.distance_to(TARGET) < 0.01)
+			return
+		if _elapsed > HOST_FINISH_AT:
+			_finish()
+		return
+
+	var probe := _find_probe()
+	if probe == null:
+		return
+	var state := _state_of(probe)
+	if state != null and not _saw_state and int(state.get_value(&"phase", 0)) == 42:
+		_saw_state = true
+		_record("client received the restored entity's state", true)
+	if _saw_state and not _saw_move and (probe as Node3D).global_position.distance_to(TARGET) < TOLERANCE:
+		_saw_move = true
+		_record("client received the restored entity's position", true)
+		_finish()
+
+
 func _find_probe() -> Node:
 	for node: Node in world.entities():
 		if _state_of(node) != null:
@@ -282,6 +404,10 @@ func _expected_checks() -> int:
 			return 2
 		"rejection":
 			return 2 if _role == "client" else 4
+		"three_peer":
+			return 2
+		"persistence":
+			return 2 if _role == "client" else 6
 		_:
 			return 6 if _role == "client" else 4
 
@@ -304,6 +430,10 @@ func _finish() -> void:
 	if _results.size() < expected:
 		print("[TEST] FAIL  only %d of %d checks ran" % [_results.size(), expected])
 		failures += 1
+	if failures > 0:
+		print("[TEST] diag role=%s peers=%d registered=%d world=%d peak_roster=%d" % [
+			_role, Net.player_count(), Net.entity_count(), world.entities().size(), _peak_roster
+		])
 	print("[TEST] %s role=%s checks=%d failures=%d" % [
 		"PASSED" if failures == 0 else "FAILED", _role, _results.size(), failures
 	])
